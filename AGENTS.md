@@ -123,8 +123,8 @@ top-level `interval` as the polling cadence for `window`, `ocr`, `image`, and
 
 - `window_find({window?, limit?})`
 - `window_control({window?, display?, action, pos?, rect?})`
-- `window_get({window?, text?})`
-- `window_set({window?, title?, frame?, topmost?, opacity?, enabled?, highlight?})`
+- `window_get_prop({window?, text?})`
+- `window_set_prop({window?, title?, frame?, topmost?, opacity?, enabled?, highlight?})`
 - `window_hit({pos?, display?, child?})`
 - `a11y_find({a11y?, limit?})`
 - `a11y_action({a11y?, action, value?})`
@@ -284,14 +284,14 @@ are best-effort: an unavailable target or unusable operation should be
 skipped/no-op rather than aborting the scenario. Safety-sensitive tests may
 still verify `foreground` before injecting keyboard input.
 
-`window_get({window: {...}, text: true})` is the explicit live native-text path.
+`window_get_prop({window: {...}, text: true})` is the explicit live native-text path.
 Keep normal window records cheap and retain `title` as the ordinary enumeration
 field. On Windows, `text: true` uses bounded `WM_GETTEXTLENGTH` / `WM_GETTEXT`
 through `SendMessageTimeoutW`, which can retrieve cross-process standard control
 contents such as Edit, Static, and Button text where `GetWindowTextW`
 deliberately cannot. Return `text: null` when the message cannot be completed
 safely. Text selection is a separate input helper and must not grow back into
-`window_get`.
+`window_get_prop`.
 
 `window_control({window: {...}, action: "move" | "size", pos?, rect?})` changes
 window geometry directly with one Win32 `SetWindowPos` call, without
@@ -302,7 +302,7 @@ together. `rect` is resolved first, then any axes present in `pos` move the
 resulting rectangle without changing its resolved size. There is no separate
 `resize` action.
 
-`window_set()` is the compact best-effort mutation/debug primitive for simple
+`window_set_prop()` is the compact best-effort mutation/debug primitive for simple
 HWND properties. Current fields are `title`,
 `frame: none|border|caption|resizable`, `topmost`, `opacity: 0..1`, `enabled`,
 and optional `highlight` (`true` or an AAF duration). `highlight` draws a
@@ -416,12 +416,12 @@ cursor movement merely to claim support.
 Current platform decisions:
 
 - Windows is the reference/richest backend: HWND hierarchy/owner/client rect,
-  UIA, direct-target mouse messages, full current `window_set`, GDI capture,
+  UIA, direct-target mouse messages, full current `window_set_prop`, GDI capture,
   WinRT OCR, all conditional waits, lock state and wake/awake are implemented.
 - Darwin uses Quartz for enumeration/display data and AX for cross-process
   control/accessibility. There is no current native child-window tree,
   direct-target mouse, foreign-window `WC`, `maximize`, lock query, or generic
-  frame/topmost/opacity/enabled mutation. `window_set` currently maps title
+  frame/topmost/opacity/enabled mutation. `window_set_prop` currently maps title
   only. Darwin waits currently support window and OCR. Screenshot uses optional
   `CGWindowListCreateImage`; keep the symbol optional because Apple deprecated
   that API and capture failure must not prevent the whole backend from loading.

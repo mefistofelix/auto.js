@@ -144,10 +144,10 @@ const {
   window_find,
   a11y_find,
   a11y_action,
-  window_get,
+  window_get_prop,
   window_wait,
   window_control,
-  window_set,
+  window_set_prop,
   window_hit,
   mouse_move,
   mouse_button,
@@ -247,9 +247,9 @@ try {
   assert(root.client?.width > 0 && root.client?.height > 0, "window client rect missing");
   assert(Number.isInteger(root.zorder) && root.zorder >= 0, "window zorder missing");
   same(window_find({ window: { wid: root.wid, zorder: root.zorder }, limit: 1 })[0]?.wid, root.wid, "window zorder filter failed");
-  same(window_get({ window: { wid: editWindow.wid }, text: true })?.text, EDIT_INITIAL, "window_get edit text failed");
-  same(window_get({ window: { wid: statusWindow.wid }, text: true })?.text, `${STATUS_PREFIX} 0`, "window_get label text failed");
-  same((await run([{ window_get: { window: { wid: editWindow.wid }, text: true } }])).results[0]?.text, EDIT_INITIAL, "scenario window_get text failed");
+  same(window_get_prop({ window: { wid: editWindow.wid }, text: true })?.text, EDIT_INITIAL, "window_get_prop edit text failed");
+  same(window_get_prop({ window: { wid: statusWindow.wid }, text: true })?.text, `${STATUS_PREFIX} 0`, "window_get_prop label text failed");
+  same((await run([{ window_get_prop: { window: { wid: editWindow.wid }, text: true } }])).results[0]?.text, EDIT_INITIAL, "scenario window_get_prop text failed");
   same(input_sel({ window: { wid: editWindow.wid }, read: true }), "EDIT", "input_sel read failed");
   same((await run([{ input_sel: { window: { wid: editWindow.wid }, read: true } }])).results[0], "EDIT", "scenario input_sel read failed");
   assert(nestedWindow.depth >= 2, "nested native depth was not preserved");
@@ -284,9 +284,9 @@ try {
   assert(a11yEdit?.actions?.includes("set"), "accessible edit set capability missing");
   const a11ySetText = `A11Y SET ${token}`;
   same(a11y_action({ a11y: { wid: editWindow.wid }, action: "set", value: a11ySetText })?.action, "set", "a11y set action failed");
-  await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === a11ySetText, "a11y set did not update edit text");
+  await eventually(() => window_get_prop({ window: { wid: editWindow.wid }, text: true })?.text === a11ySetText, "a11y set did not update edit text");
   a11y_action({ a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL });
-  await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === EDIT_INITIAL, "a11y set did not restore edit text");
+  await eventually(() => window_get_prop({ window: { wid: editWindow.wid }, text: true })?.text === EDIT_INITIAL, "a11y set did not restore edit text");
   same((await run([{ a11y_action: { a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL } }])).results[0]?.action, "set", "scenario a11y_action failed");
   same(
     window_find({
@@ -309,10 +309,10 @@ try {
   same(input_sel({ window: { wid: editWindow.wid }, select: true })?.text, EDIT_INITIAL, "input_sel select-all failed");
   same((await run([{ input_sel: { window: { wid: editWindow.wid }, select: "READY$" } }])).results[0]?.text, "READY", "scenario input_sel regex select failed");
   same(input_sel({ window: { wid: editWindow.wid }, write: "Z" })?.length, 1, "input_sel write failed");
-  const selectionWritten = window_get({ window: { wid: editWindow.wid }, text: true })?.text;
+  const selectionWritten = window_get_prop({ window: { wid: editWindow.wid }, text: true })?.text;
   assert(selectionWritten?.includes("Z") && selectionWritten !== EDIT_INITIAL, "input_sel write did not replace/insert at the current selection");
   a11y_action({ a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL });
-  await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === EDIT_INITIAL, "selection test did not restore edit text");
+  await eventually(() => window_get_prop({ window: { wid: editWindow.wid }, text: true })?.text === EDIT_INITIAL, "selection test did not restore edit text");
   check("input_sel select/read/write");
 
   assert(await window_wait({ window: { wid: root.wid }, timeout: 500, interval: 20 }), "window_wait failed");
@@ -321,21 +321,21 @@ try {
   check("window_wait and wait.window/not");
 
   window_control({ window: { wid: root.wid }, action: "minimize" });
-  same(window_get({ window: { wid: root.wid } })?.status, "minimized", "minimize failed");
+  same(window_get_prop({ window: { wid: root.wid } })?.status, "minimized", "minimize failed");
   window_control({ window: { wid: root.wid }, action: "restore" });
   window_control({ window: { wid: root.wid }, action: "maximize" });
-  same(window_get({ window: { wid: root.wid } })?.status, "maximized", "maximize failed");
+  same(window_get_prop({ window: { wid: root.wid } })?.status, "maximized", "maximize failed");
   window_control({ window: { wid: root.wid }, action: "restore" });
   await wait(50);
 
-  let geometry = window_get({ window: { wid: root.wid } });
+  let geometry = window_get_prop({ window: { wid: root.wid } });
   window_control({
     window: { wid: root.wid },
     action: "move",
     pos: { x: "+37", y: "+23" },
     rect: { width: "+40", height: "+30" },
   });
-  let moved = window_get({ window: { wid: root.wid } });
+  let moved = window_get_prop({ window: { wid: root.wid } });
   same(moved.rect.x, geometry.rect.x + 37, "relative x move failed");
   same(moved.rect.y, geometry.rect.y + 23, "relative y move failed");
   same(moved.rect.width, geometry.rect.width + 40, "relative width failed");
@@ -346,11 +346,11 @@ try {
     pos: { x: geometry.rect.x, y: geometry.rect.y },
     rect: { width: geometry.rect.width, height: geometry.rect.height },
   });
-  geometry = window_get({ window: { wid: root.wid } });
+  geometry = window_get_prop({ window: { wid: root.wid } });
   check("window_control minimize/maximize/restore/move/size");
 
   const changedTitle = `AAF MUTATED ${token}`;
-  const changed = await window_set({
+  const changed = await window_set_prop({
     window: { wid: root.wid },
     title: changedTitle,
     frame: "border",
@@ -358,10 +358,10 @@ try {
     opacity: 0.97,
     enabled: false,
   });
-  same(changed?.title, changedTitle, "window_set title failed");
+  same(changed?.title, changedTitle, "window_set_prop title failed");
   await wait(30);
-  assert(a11y_find({ a11y: { wid: root.wid, enabled: false }, limit: 1 }).length === 1, "window_set enabled:false not observable in a11y");
-  await window_set({
+  assert(a11y_find({ a11y: { wid: root.wid, enabled: false }, limit: 1 }).length === 1, "window_set_prop enabled:false not observable in a11y");
+  await window_set_prop({
     window: { wid: root.wid },
     title: `AAF TEST FIXTURE ${token}`,
     frame: "resizable",
@@ -370,15 +370,15 @@ try {
     enabled: true,
     highlight: 30,
   });
-  root = window_get({ window: { wid: root.wid } });
-  check("window_set + highlight");
+  root = window_get_prop({ window: { wid: root.wid } });
+  check("window_set_prop + highlight");
 
-  await window_set({ window: { wid: root.wid }, topmost: true });
+  await window_set_prop({ window: { wid: root.wid }, topmost: true });
   window_control({ window: { wid: root.wid }, action: "focus" });
   await wait(40);
-  root = window_get({ window: { wid: root.wid } });
+  root = window_get_prop({ window: { wid: root.wid } });
 
-  const buttonNow = window_get({ window: { wid: buttonWindow.wid } });
+  const buttonNow = window_get_prop({ window: { wid: buttonWindow.wid } });
   assert(buttonNow, "button disappeared before hit test");
   const buttonCenter = {
     x: buttonNow.rect.x + Math.floor(buttonNow.rect.width / 2),
@@ -442,9 +442,9 @@ try {
   same(input_reset().released, 0, "run did not implicitly reset direct mouse hold");
   check("mouse_button direct click/wheel/hwheel + run reset");
 
-  root = window_get({ window: { wid: root.wid } });
+  root = window_get_prop({ window: { wid: root.wid } });
   if (interactiveDesktop && root?.foreground) {
-    const editNow = window_get({ window: { wid: editWindow.wid } });
+    const editNow = window_get_prop({ window: { wid: editWindow.wid } });
     const editCenter = {
       x: editNow.rect.x + Math.floor(editNow.rect.width / 2),
       y: editNow.rect.y + Math.floor(editNow.rect.height / 2),
@@ -461,7 +461,7 @@ try {
     const typedText = `KEYB ${token}`;
     const typed = await keyb({ type: typedText, interval: 5 });
     same(typed.typed, typedText.length, "keyb typed count failed");
-    const editValue = () => window_get({ window: { wid: editWindow.wid }, text: true })?.text;
+    const editValue = () => window_get_prop({ window: { wid: editWindow.wid }, text: true })?.text;
     const afterType = `${EDIT_INITIAL}${typedText}`;
     await eventually(() => editValue() === afterType, "typed text did not reach fixture edit");
     const repeated = await keyb({ press: "backspace", repeat: 2, interval: 10 });
@@ -504,7 +504,7 @@ try {
   } else {
     console.log("↷ keyb injection verification skipped: fixture is not foreground on an interactive desktop");
   }
-  await window_set({ window: { wid: root.wid }, topmost: false });
+  await window_set_prop({ window: { wid: root.wid }, topmost: false });
 
   const fullPng = `${temp}\\full.png`;
   const immediate = (await run([{
@@ -574,7 +574,7 @@ try {
         "&history": "$.ret[0]",
       },
     },
-    { window_set: { window: { wid: "$.state.target.wid" }, title: "<<$.state.expected>>" } },
+    { window_set_prop: { window: { wid: "$.state.target.wid" }, title: "<<$.state.expected>>" } },
     { window_find: { window: { title: "^<<$.state.expected|re>>$" }, limit: 1 } },
     { state: { matched: "$.ret[0]", "-": ["meta.pid"] } },
     { screenshot: { window: { wid: "$.state.target.wid" } } },
@@ -635,7 +635,7 @@ try {
   same((await run({})).results[0]?.error, "invalid scenario", "non-array scenario should be diagnosed");
   check("run curr/prev/ret/state, diagnostics, interpolation, push/delete, image resource lifetime");
 
-  await window_set({ window: { wid: root.wid }, title: `AAF TEST FIXTURE ${token}`, highlight: 20 });
+  await window_set_prop({ window: { wid: root.wid }, title: `AAF TEST FIXTURE ${token}`, highlight: 20 });
   check("all verification groups passed");
 } finally {
   try {
@@ -644,7 +644,7 @@ try {
     // Power-state restoration is best effort.
   }
   try {
-    if (root && window_get({ window: { wid: root.wid } })) {
+    if (root && window_get_prop({ window: { wid: root.wid } })) {
       window_control({ window: { wid: root.wid }, action: "close" });
       await wait(100);
     }

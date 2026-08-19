@@ -910,7 +910,7 @@ export function input_sel(options = {}) {
   return textRange(text, { start: start[0], end: end[0] })?.text ?? null;
 }
 
-export function window_get({ window = {}, text = false } = {}) {
+export function window_get_prop({ window = {}, text = false } = {}) {
   const found = windowRecords(window)[0];
   if (!found) return null;
   const out = publicWindow(found);
@@ -1035,7 +1035,7 @@ export function window_control(
   } else if (action === "close") {
     user32.symbols.PostMessageW(hwnd, WM_CLOSE, 0n, 0n);
   }
-  return window_get({ window: { wid: info.wid } });
+  return window_get_prop({ window: { wid: info.wid } });
 }
 const WINDOW_FRAMES = {
   none: 0,
@@ -1098,7 +1098,7 @@ function setWindowOpacity(hwnd, opacity) {
   );
 }
 
-export async function window_set(
+export async function window_set_prop(
   { window = {}, title, frame, topmost, opacity, enabled, highlight } = {},
 ) {
   const info = windowRecords(window)[0];
@@ -1109,7 +1109,7 @@ export async function window_set(
   if (topmost != null) setWindowTopmost(hwnd, !!topmost);
   if (opacity != null) setWindowOpacity(hwnd, opacity);
   if (enabled != null) user32.symbols.EnableWindow(hwnd, enabled ? 1 : 0);
-  const result = window_get({ window: { wid: info.wid } });
+  const result = window_get_prop({ window: { wid: info.wid } });
   if (highlight && result?.rect) {
     await highlightRect(result.rect, highlight === true ? 800 : highlight, {
       highlight,
@@ -2874,7 +2874,7 @@ async function testWaitCondition(kind, prepared) {
   const none = { matched: false, value: null };
   try {
     if (kind === "window") {
-      const value = window_get(prepared);
+      const value = window_get_prop(prepared);
       return { matched: !!value, value };
     }
     if (kind === "ocr") {

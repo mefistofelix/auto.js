@@ -756,7 +756,7 @@ export function window_find({ window = {}, limit = 0 } = {}) {
   return max === Infinity ? found : found.slice(0, max);
 }
 
-export function window_get({ window = {}, text = false } = {}) {
+export function window_get_prop({ window = {}, text = false } = {}) {
   const found = windowRecords(window)[0];
   if (!found) return null;
   return text ? { ...found, text: null } : found;
@@ -992,10 +992,10 @@ export function window_control(
     xClientMessage(wid, "_NET_CLOSE_WINDOW", [0, 2, 0, 0, 0]);
   }
   xlib.symbols.XFlush(xDisplay);
-  return window_get({ window: { wid: info.wid } });
+  return window_get_prop({ window: { wid: info.wid } });
 }
 
-export function window_set(
+export function window_set_prop(
   { window = {}, title, frame, topmost, opacity, enabled, highlight } = {},
 ) {
   const info = windowRecords(window)[0];
@@ -1045,7 +1045,7 @@ export function window_set(
   void enabled;
   void highlight;
   xlib.symbols.XFlush(xDisplay);
-  return window_get({ window: { wid: info.wid } });
+  return window_get_prop({ window: { wid: info.wid } });
 }
 
 function cursorPoint() {
@@ -2286,7 +2286,7 @@ export async function wait(options = 0) {
   if (kinds.length !== 1 || kinds[0] !== "window") return null;
   const until = performance.now() + timeMs(options.timeout, 10000, options);
   for (;;) {
-    const value = window_get({ window: options.window });
+    const value = window_get_prop({ window: options.window });
     if (options.not ? !value : value) return options.not ? true : value;
     const remaining = until - performance.now();
     if (remaining <= 0) return null;

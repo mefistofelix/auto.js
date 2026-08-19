@@ -152,9 +152,9 @@ is ordered by domain rather than by implementation history.
 - [`window_find`](#window_find) — find native windows.
 - [`window_control`](#window_control) — focus, move, resize, minimize, maximize,
   restore, or close a window.
-- [`window_get`](#window_get) — get one native window, optionally including live
-  control text.
-- [`window_set`](#window_set) — change supported window properties or briefly
+- [`window_get_prop`](#window_get_prop) — read supported properties from one native
+  window, optionally including live control text.
+- [`window_set_prop`](#window_set_prop) — change supported window properties or briefly
   highlight the window.
 - [`window_hit`](#window_hit) — resolve the native window under a point.
 
@@ -254,10 +254,10 @@ resolved.
 
 <br>
 
-## `window_get`
+## `window_get_prop`
 
-_Get the first native window matching a filter, with optional live native text
-retrieval._
+_Read supported properties from the first native window matching a filter, with
+optional live native text retrieval._
 
 **Action input**
 
@@ -266,7 +266,7 @@ retrieval._
   relying only on the normal enumerated `title` field.
 
 ```yaml
-- window_get:
+- window_get_prop:
     window: { class: "^Edit$" }
     text: true
 ```
@@ -284,7 +284,7 @@ a separate [`input_sel`](#input_sel) action rather than a window property.
 
 <br>
 
-## `window_set`
+## `window_set_prop`
 
 _Apply supported best-effort properties to one native window._
 
@@ -304,7 +304,7 @@ There is no generic `class` setter. Native class/control identity is not
 generally an instance property that can be truthfully renamed across backends.
 
 ```yaml
-- window_set:
+- window_set_prop:
     window: { wid: "$.state.target.wid" }
     title: "DEBUG - <<$.state.target.title>>"
     frame: resizable
@@ -1519,7 +1519,7 @@ not grow per-platform capability objects or alternate action names.
 | native window discovery / geometry / hit testing        | yes, Win32                                         | yes, Quartz; no native child-window tree     | yes, Xlib/EWMH                           | no global surface enumeration                            |
 | window focus / move / size / minimize / restore / close | yes                                                | yes through AX                               | yes through EWMH/Xlib                    | no generic cross-application control                     |
 | window maximize                                         | yes                                                | unavailable in the current backend           | yes                                      | unavailable                                              |
-| `window_set`                                            | title, frame, topmost, opacity, enabled, highlight | title only                                   | title, topmost, opacity                  | unavailable                                              |
+| `window_set_prop`                                            | title, frame, topmost, opacity, enabled, highlight | title only                                   | title, topmost, opacity                  | unavailable                                              |
 | accessibility                                           | UI Automation                                      | AX                                           | AT-SPI                                   | AT-SPI                                                   |
 | `W` / `WC` / `D` geometry                               | yes                                                | `W` and `D`; `WC` unavailable                | yes                                      | accessibility geometry only where exposed by AT-SPI      |
 | physical keyboard / mouse                               | yes                                                | yes, CoreGraphics                            | yes, XTest                               | unavailable without an explicit compositor-mediated path |
@@ -1557,7 +1557,7 @@ macOS uses several public native surfaces rather than one HWND-like model:
 The missing pieces are deliberate. macOS does not expose a general public
 cross-process equivalent of the Windows child-HWND tree or direct `PostMessage`
 mouse delivery, and the current public surfaces do not give AutoJS a reliable
-foreign-window client rectangle (`WC`). `window_set` therefore exposes only the
+foreign-window client rectangle (`WC`). `window_set_prop` therefore exposes only the
 AX title mutation that has a real equivalent; frame/topmost/opacity/enabled and
 `maximize` are not guessed. Screenshot capture currently uses the legacy Quartz
 `CGWindowListCreateImage` symbol when present; because Apple has deprecated that

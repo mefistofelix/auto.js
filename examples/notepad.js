@@ -1,7 +1,7 @@
 import {
   display_find,
   window_find,
-  window_get,
+  window_get_prop,
   window_control,
   ocr,
   mouse_move,
@@ -22,7 +22,7 @@ new Deno.Command("notepad.exe").spawn();
 
 function focusTarget(win) {
   window_control({ window: { wid: win.wid }, action: "focus" });
-  const current = window_get({ window: { wid: win.wid } });
+  const current = window_get_prop({ window: { wid: win.wid } });
   if (!current?.foreground) {
     throw new Error(`Refusing input: target ${win.wid} is not foreground`);
   }
@@ -50,7 +50,7 @@ console.log("display_find", display_find());
   await pause("minimize");
   window_control({ window: { wid: win.wid }, action: "minimize" });
   await wait({ ms: STEP_DELAY });
-  if (window_get({ window: { wid: win.wid } })?.status !== "minimized") throw new Error("Notepad did not minimize");
+  if (window_get_prop({ window: { wid: win.wid } })?.status !== "minimized") throw new Error("Notepad did not minimize");
   console.log("minimize: ok");
 
   await pause("restore + focus");
@@ -58,7 +58,7 @@ console.log("display_find", display_find());
   await wait({ ms: STEP_DELAY });
   focusTarget(win);
   await wait({ ms: STEP_DELAY });
-  if (window_get({ window: { wid: win.wid } })?.status === "minimized") throw new Error("Notepad did not restore");
+  if (window_get_prop({ window: { wid: win.wid } })?.status === "minimized") throw new Error("Notepad did not restore");
   console.log("restore + focus: ok");
 
   // Clipboard roundtrip is tested independently before keyboard input.
@@ -111,7 +111,7 @@ console.log("display_find", display_find());
   }
   console.log("ocr assertion: ok");
 
-  const geometry = window_get({ window: { wid: win.wid } });
+  const geometry = window_get_prop({ window: { wid: win.wid } });
 
   await pause("relative window move + resize");
   window_control({
@@ -120,7 +120,7 @@ console.log("display_find", display_find());
     pos: { x: "+60", y: "+30" },
     rect: { right: "+10%", bottom: "+8%" },
   });
-  let changed = window_get({ window: { wid: win.wid } });
+  let changed = window_get_prop({ window: { wid: win.wid } });
   if (changed.rect.x !== geometry.rect.x + 60 || changed.rect.y !== geometry.rect.y + 30) {
     throw new Error("Relative window move failed");
   }
@@ -135,7 +135,7 @@ console.log("display_find", display_find());
     pos: { x: "-60", y: "-30" },
     rect: { right: String(-addedWidth), bottom: String(-addedHeight) },
   });
-  changed = window_get({ window: { wid: win.wid } });
+  changed = window_get_prop({ window: { wid: win.wid } });
   if (
     changed.rect.x !== geometry.rect.x || changed.rect.y !== geometry.rect.y ||
     changed.rect.width !== geometry.rect.width || changed.rect.height !== geometry.rect.height
@@ -155,7 +155,7 @@ console.log("display_find", display_find());
   mouse_button({ up: "left" });
   await wait({ ms: STEP_DELAY });
 
-  const afterMove = window_get({ window: { wid: win.wid } });
+  const afterMove = window_get_prop({ window: { wid: win.wid } });
   console.log("window moved", {
     before: [beforeMove.rect.x, beforeMove.rect.y],
     after: [afterMove.rect.x, afterMove.rect.y],
@@ -184,6 +184,6 @@ console.log("display_find", display_find());
   await pause("close");
   window_control({ window: { wid: win.wid }, action: "close" });
   await wait({ ms: STEP_DELAY });
-  const stillOpen = window_get({ window: { wid: win.wid } });
+  const stillOpen = window_get_prop({ window: { wid: win.wid } });
   if (stillOpen) throw new Error("Close was requested but the test Notepad window is still open");
   console.log("close: ok");

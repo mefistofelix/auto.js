@@ -156,7 +156,7 @@ emulated with misleading semantics.
 **Windows** is the reference backend and currently the only one covered by the
 full integration suite. Win32 + UI Automation + WinRT provide the richest
 mapping, including HWND hierarchy/owner/client geometry, direct-target mouse,
-full `window_set`, native OCR, all conditional waits, lock state, wake, and
+full `window_set_prop`, native OCR, all conditional waits, lock state, wake, and
 continuous awake.
 
 **macOS** uses Quartz for windows/displays, AX for accessibility and

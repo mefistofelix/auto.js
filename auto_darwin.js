@@ -1114,7 +1114,7 @@ function windowStatus(record) {
   ) ?? record.status;
 }
 
-export function window_get({ window = {}, text = false } = {}) {
+export function window_get_prop({ window = {}, text = false } = {}) {
   const found = windowRecords(window)[0];
   if (!found) return null;
   found.status = windowStatus(found);
@@ -1304,10 +1304,10 @@ export function window_control(
       }
     }
   });
-  return window_get({ window: { wid: info.wid } });
+  return window_get_prop({ window: { wid: info.wid } });
 }
 
-export function window_set(
+export function window_set_prop(
   { window = {}, title } = {},
 ) {
   const info = windowRecords(window)[0];
@@ -1319,7 +1319,7 @@ export function window_set(
       }
     });
   }
-  return window_get({ window: { wid: info.wid } });
+  return window_get_prop({ window: { wid: info.wid } });
 }
 
 function cursorPoint() {
@@ -2297,7 +2297,7 @@ export async function wait(options = 0) {
     let value;
     let matched;
     if (kinds[0] === "window") {
-      value = window_get({ window: options.window });
+      value = window_get_prop({ window: options.window });
       matched = !!value;
     } else {
       const { text, ...source } = options.ocr ?? {};

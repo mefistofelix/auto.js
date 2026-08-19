@@ -936,33 +936,19 @@ function comRelease(...objects) { for (const object of objects) if (object) comC
 function comUse(object, fn) { if (!object) return null; try { return fn(object); } finally { comRelease(object); } }
 function comQuery(object, iid) { return comPtr(object, 0, [guid(iid)], ["buffer"], "QueryInterface"); }
 
-const CLSID_CUIAutomation = "ff48dba4-60ef-4201-aa87-54103eef594e";
-const IID_IUIAutomation = "30cbe57d-d9d0-452a-ab13-7ac5ac4825ee";
-const CLSCTX_INPROC_SERVER = 1;
-
+const CLSID_CUIAutomation = "ff48dba4-60ef-4201-aa87-54103eef594e", IID_IUIAutomation = "30cbe57d-d9d0-452a-ab13-7ac5ac4825ee", CLSCTX_INPROC_SERVER = 1;
 const UIA_TYPES = "button calendar check-box combo-box edit hyperlink image list-item list menu menu-bar menu-item progress-bar radio-button scroll-bar slider spinner status-bar tab tab-item text tool-bar tool-tip tree tree-item custom group thumb data-grid data-item document split-button window pane header header-item table title-bar separator semantic-zoom app-bar".split(" ");
-
-let comReady = false;
-let uiaAutomation = null;
-let uiaWalker = null;
+let comReady = false, uiaAutomation = null, uiaWalker = null;
 
 function ensureCom() {
-  if (comReady) return;
-  const hr = ole32.symbols.CoInitializeEx(null, 0);
-  if (hr < 0 && (hr >>> 0) !== 0x80010106) checkHR(hr, "CoInitializeEx");
-  comReady = true;
+  if (comReady) return; const hr = ole32.symbols.CoInitializeEx(null, 0);
+  if (hr < 0 && (hr >>> 0) !== 0x80010106) checkHR(hr, "CoInitializeEx"); comReady = true;
 }
-
 function ensureUia() {
-  if (uiaAutomation && uiaWalker) return;
-  ensureCom();
-  const out = new BigUint64Array(1);
-  checkHR(ole32.symbols.CoCreateInstance(guid(CLSID_CUIAutomation), null, CLSCTX_INPROC_SERVER, guid(IID_IUIAutomation), out), "CoCreateInstance(CUIAutomation)");
-  uiaAutomation = out[0] ? Deno.UnsafePointer.create(out[0]) : null;
-  if (!uiaAutomation) throw new Error("CUIAutomation returned no interface");
-
-  uiaWalker = comPtr(uiaAutomation, 14, [], [], "IUIAutomation.ControlViewWalker");
-  if (!uiaWalker) { comRelease(uiaAutomation); uiaAutomation = null; throw new Error("UI Automation ControlViewWalker unavailable"); }
+  if (uiaAutomation && uiaWalker) return; ensureCom();
+  const out = new BigUint64Array(1); checkHR(ole32.symbols.CoCreateInstance(guid(CLSID_CUIAutomation), null, CLSCTX_INPROC_SERVER, guid(IID_IUIAutomation), out), "CoCreateInstance(CUIAutomation)");
+  if (!(uiaAutomation = asPointer(out[0]))) throw new Error("CUIAutomation returned no interface");
+  if (!(uiaWalker = comPtr(uiaAutomation, 14, [], [], "IUIAutomation.ControlViewWalker"))) { comRelease(uiaAutomation); uiaAutomation = null; throw new Error("UI Automation ControlViewWalker unavailable"); }
 }
 
 function uiaRootElement() { ensureUia(); return comPtr(uiaAutomation, 5); }
@@ -981,10 +967,7 @@ function uiaBstr(element, index) {
 }
 function uiaNativeWid(element) { const pointer = comPtr(element, 36); return pointer ? ptrId(pointer) : null; }
 
-function uiaRect(element) {
-  const { hr, out: rect } = comOut(element, 43, Int32Array, 4);
-  return hr < 0 ? null : { x: rect[0], y: rect[1], width: rect[2] - rect[0], height: rect[3] - rect[1] };
-}
+function uiaRect(element) { const { hr, out: r } = comOut(element, 43, Int32Array, 4); return hr < 0 ? null : { x: r[0], y: r[1], width: r[2] - r[0], height: r[3] - r[1] }; }
 
 function uiaRuntimeId(element) {
   const result = comOut(element, 4);
@@ -1021,25 +1004,13 @@ function uiaVariant(element, propertyId) {
 function uiaTypeName(id) { return id == null ? null : UIA_TYPES[Number(id) - 50000] ?? String(id); }
 function normalizeUiaType(value) { return typeof value === "number" ? uiaTypeName(value) : String(value ?? "").trim().toLowerCase().replace(/[_\s]+/g, "-"); }
 
+const UIA_RECORD = [
+  ["pid",20,uiaInt],["name",23,uiaBstr],["focus",26,uiaBool],["focusable",27,uiaBool],["enabled",28,uiaBool],
+  ["aid",29,uiaBstr],["class",30,uiaBstr],["offscreen",38,uiaBool],["framework",40,uiaBstr],
+];
 function uiaRecord(element) {
-  const runtimeId = uiaRuntimeId(element);
-  const typeId = uiaInt(element, 21);
-  return {
-    uid: runtimeId ? runtimeId.join(".") : null,
-    wid: uiaNativeWid(element),
-    aid: uiaBstr(element, 29),
-    name: uiaBstr(element, 23),
-    type: uiaTypeName(typeId),
-    class: uiaBstr(element, 30),
-    framework: uiaBstr(element, 40),
-    pid: uiaInt(element, 20),
-    rect: uiaRect(element),
-    value: uiaVariant(element, 30045),
-    enabled: uiaBool(element, 28),
-    focus: uiaBool(element, 26),
-    focusable: uiaBool(element, 27),
-    offscreen: uiaBool(element, 38),
-  };
+  const runtime = uiaRuntimeId(element), record = { uid: runtime ? runtime.join(".") : null, wid: uiaNativeWid(element), type: uiaTypeName(uiaInt(element, 21)), rect: uiaRect(element), value: uiaVariant(element, 30045) };
+  for (const [key, index, get] of UIA_RECORD) record[key] = get(element, index); return record;
 }
 
 function normalizeUiaFilter(filter) { return filter == null ? {} : typeof filter === "string" ? { name: filter } : filter; }
@@ -1055,63 +1026,35 @@ function matchesUiaOwn(record, filter) { return matchesFields(record, filter, A1
 function uiaWalk(root, direction, maxDepth, visitor) {
   if (direction === "up") {
     let current = uiaParent(root);
-    for (let depth = 1; current && depth <= maxDepth; depth++) {
-      let next = null;
-      try { if (visitor(current, depth)) return true; if (depth < maxDepth) next = uiaParent(current); }
-      finally { comRelease(current); }
-      current = next;
-    }
+    for (let depth = 1; current && depth <= maxDepth; depth++) { let next; try { if (visitor(current, depth)) return true; next = depth < maxDepth && uiaParent(current); } finally { comRelease(current); } current = next; }
     return false;
   }
-  function down(parent, depth) {
+  const down = (parent, depth) => {
     let child = uiaFirstChild(parent);
-    while (child) {
-      let next = null;
-      try { if (visitor(child, depth) || (depth < maxDepth && down(child, depth + 1))) return true; next = uiaNextSibling(child); }
-      finally { comRelease(child); }
-      child = next;
-    }
+    while (child) { let next; try { if (visitor(child, depth) || (depth < maxDepth && down(child, depth + 1))) return true; next = uiaNextSibling(child); } finally { comRelease(child); } child = next; }
     return false;
-  }
+  };
   return maxDepth >= 1 && down(root, 1);
 }
 
 function uiaWindowTargetSet(filter) { return new Set(windowRecords(filter ?? {}).map((window) => window.wid.toLowerCase())); }
 function matchesUiaRelation(element, direction, spec) {
-  const relation = relationSpec(spec, "a11y");
-  if (!relation) return false;
-  if (relation.domain === "window") {
-    const targets = uiaWindowTargetSet(relation.filter);
-    return !!targets.size && uiaWalk(element, direction, relation.depth, (candidate) => {
-      const wid = uiaNativeWid(candidate); return !!wid && targets.has(wid.toLowerCase());
-    });
-  }
-  return uiaWalk(element, direction, relation.depth, (candidate) => {
-    const record = uiaRecord(candidate); return matchesUia(candidate, record, relation.filter);
-  });
+  const relation = relationSpec(spec, "a11y"); if (!relation) return false;
+  if (relation.domain === "window") { const targets = uiaWindowTargetSet(relation.filter); return !!targets.size && uiaWalk(element, direction, relation.depth, (e) => { const wid = uiaNativeWid(e); return !!wid && targets.has(wid.toLowerCase()); }); }
+  return uiaWalk(element, direction, relation.depth, (e) => { const record = uiaRecord(e); return matchesUia(e, record, relation.filter); });
 }
 function matchesUia(element, record, filter) {
-  filter = normalizeUiaFilter(filter);
-  return matchesUiaOwn(record, filter)
-    && (filter.up == null || matchesUiaRelation(element, "up", filter.up))
-    && (filter.down == null || matchesUiaRelation(element, "down", filter.down));
+  filter = normalizeUiaFilter(filter); return matchesUiaOwn(record, filter) && (filter.up == null || matchesUiaRelation(element, "up", filter.up)) && (filter.down == null || matchesUiaRelation(element, "down", filter.down));
 }
 function matchesWindowUiaRelation(window, direction, relation) {
-  return !!comUse(uiaElementFromHandle(asPointer(window.wid)), (root) => uiaWalk(root, direction, relation.depth, (candidate) => {
-    const record = uiaRecord(candidate); return matchesUia(candidate, record, relation.filter);
-  }));
+  return !!comUse(uiaElementFromHandle(asPointer(window.wid)), (root) => uiaWalk(root, direction, relation.depth, (e) => { const record = uiaRecord(e); return matchesUia(e, record, relation.filter); }));
 }
 
 function uiaCollectFromRoot(root, filter, maxDepth, found, seen, limit) {
   return uiaWalk(root, "down", maxDepth, (element) => {
-    const record = uiaRecord(element);
-    if (!matchesUia(element, record, filter)) return false;
+    const record = uiaRecord(element); if (!matchesUia(element, record, filter)) return false;
     const key = record.uid ?? `${record.wid ?? ""}:${record.pid ?? ""}:${record.name}:${record.type}:${record.rect?.x ?? ""}:${record.rect?.y ?? ""}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      found.push(record);
-    }
-    return found.length >= limit;
+    if (!seen.has(key)) { seen.add(key); found.push(record); } return found.length >= limit;
   });
 }
 
@@ -1136,12 +1079,7 @@ export function a11y_find({ a11y = {}, limit = 0 } = {}) {
 }
 
 let roReady = false;
-function ensureRo() {
-  if (roReady) return;
-  const hr = combase.symbols.RoInitialize(1);
-  if (hr < 0 && (hr >>> 0) !== 0x80010106) checkHR(hr, "RoInitialize");
-  roReady = true;
-}
+function ensureRo() { if (roReady) return; const hr = combase.symbols.RoInitialize(1); if (hr < 0 && (hr >>> 0) !== 0x80010106) checkHR(hr, "RoInitialize"); roReady = true; }
 function createHString(text) {
   const chars = wide(text), out = new BigUint64Array(1);
   checkHR(combase.symbols.WindowsCreateString(chars, chars.length, out), "WindowsCreateString");
@@ -1374,79 +1312,50 @@ async function scenarioScreenshotSave(options, resources) {
   return imageResult(id, resource.value, await saveImage(resource.value, save, format));
 }
 
+const FAIL = Symbol("fail");
 function resolveActionResources(name, value, resources) {
-  if (name !== "ocr" || !value || typeof value !== "object" || typeof value.image !== "string") return { ok: true, value };
-  const image = imageResource(resources, value.image);
-  return image ? { ok: true, value: { ...value, image } } : { ok: false };
+  if (name !== "ocr" || !value || typeof value !== "object" || typeof value.image !== "string") return value;
+  const image = imageResource(resources, value.image); return image ? { ...value, image } : FAIL;
 }
-
 const ACTIONS = { wait, window_control, window_set, mouse_move, mouse_button, keyb, clipboard, ocr, window_find, window_get, a11y_find, display_find, system, window_hit, highlight };
-
-const SCENARIO_PATH = /^\$\.(prev|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/;
-const STATE_PATH = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
+const SCENARIO_PATH = /^\$\.(prev|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/, STATE_PATH = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
 
 function scenarioPath(path) {
-  const match = typeof path === "string" ? path.match(SCENARIO_PATH) : null;
-  if (!match) return null;
-  const tail = [...match[2].matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)|\[(\d+)\]/g)];
-  return [match[1], ...tail.map((x) => x[1] ?? Number(x[2]))];
+  const match = typeof path === "string" && path.match(SCENARIO_PATH);
+  return match ? [match[1], ...[...match[2].matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)|\[(\d+)\]/g)].map((x) => x[1] ?? Number(x[2]))] : null;
 }
-
 function scenarioReference(path, context) {
-  const parts = scenarioPath(path);
-  if (!parts) return { ok: false };
+  const parts = scenarioPath(path); if (!parts) return FAIL;
   let value = context[parts[0]];
-  for (const key of parts.slice(1)) {
-    if (value == null || !own(Object(value), key)) return { ok: false };
-    value = value[key];
-  }
-  return { ok: true, value: structuredClone(value) };
+  for (const key of parts.slice(1)) { if (value == null || !own(Object(value), key)) return FAIL; value = value[key]; }
+  return structuredClone(value);
 }
-
 function scenarioText(value) { return typeof value === "string" ? value : value && typeof value === "object" ? JSON.stringify(value) : String(value); }
 function regexEscape(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
-
 function resolveScenarioString(value, context) {
   if (value.startsWith("$.")) return scenarioReference(value, context);
-  let ok = true;
+  let failed = false;
   const text = value.replace(/<<([^<>]+)>>/g, (placeholder, expression) => {
-    const match = expression.match(/^(\$\..*?)(?:\|(re))?$/);
-    if (!match) return placeholder;
-    const resolved = scenarioReference(match[1], context);
-    if (!resolved.ok) { ok = false; return ""; }
-    const text = scenarioText(resolved.value);
-    return match[2] ? regexEscape(text) : text;
+    const match = expression.match(/^(\$\..*?)(?:\|(re))?$/); if (!match) return placeholder;
+    const resolved = scenarioReference(match[1], context); if (resolved === FAIL) { failed = true; return ""; }
+    const text = scenarioText(resolved); return match[2] ? regexEscape(text) : text;
   });
-  return ok ? { ok, value: text } : { ok };
+  return failed ? FAIL : text;
 }
-
 function resolveScenarioValue(value, context) {
   if (typeof value === "string") return resolveScenarioString(value, context);
-  if (!value || typeof value !== "object") return { ok: true, value };
+  if (!value || typeof value !== "object") return value;
   const out = Array.isArray(value) ? [] : {};
-  for (const [key, item] of Object.entries(value)) {
-    const resolved = resolveScenarioValue(item, context);
-    if (!resolved.ok) return resolved;
-    out[key] = resolved.value;
-  }
-  return { ok: true, value: out };
+  for (const [key, item] of Object.entries(value)) { const resolved = resolveScenarioValue(item, context); if (resolved === FAIL) return FAIL; out[key] = resolved; }
+  return out;
 }
 
 function statePath(value) { return typeof value === "string" && STATE_PATH.test(value) ? value.split(".") : null; }
-function stateKey(value) {
-  if (typeof value !== "string") return null;
-  const push = value.startsWith("&");
-  const path = statePath(push ? value.slice(1) : value);
-  return path ? { push, path } : null;
-}
-
+function stateKey(value) { if (typeof value !== "string") return null; const push = value[0] === "&", path = statePath(push ? value.slice(1) : value); return path && { push, path }; }
 function stateParent(root, path, create) {
   let target = root;
   for (const key of path.slice(0, -1)) {
-    if (!own(target, key) || !target[key] || typeof target[key] !== "object" || Array.isArray(target[key])) {
-      if (!create) return null;
-      target[key] = Object.create(null);
-    }
+    if (!own(target, key) || !target[key] || typeof target[key] !== "object" || Array.isArray(target[key])) { if (!create) return null; target[key] = Object.create(null); }
     target = target[key];
   }
   return target;
@@ -1455,25 +1364,14 @@ function stateParent(root, path, create) {
 function compileState(value, context, prefix = [], ops = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   for (const [rawKey, item] of Object.entries(value)) {
-    const key = stateKey(rawKey);
-    if (!key) return null;
+    const key = stateKey(rawKey); if (!key) return null;
     const path = [...prefix, ...key.path];
-    if (key.push) {
-      const resolved = resolveScenarioValue(item, context);
-      if (!resolved.ok) return null;
-      ops.push(["push", path, resolved.value]);
-    } else if (typeof item === "string" && item.startsWith("$.")) {
-      const resolved = scenarioReference(item, context);
-      if (!resolved.ok) return null;
-      ops.push(["set", path, resolved.value]);
-    } else if (item && typeof item === "object" && !Array.isArray(item)) {
-      if (!Object.keys(item).length) ops.push(["object", path]);
-      else if (!compileState(item, context, path, ops)) return null;
-    } else {
-      const resolved = resolveScenarioValue(item, context);
-      if (!resolved.ok) return null;
-      ops.push(["set", path, resolved.value]);
+    if (!key.push && item && typeof item === "object" && !Array.isArray(item)) {
+      if (!Object.keys(item).length) ops.push(["object", path]); else if (!compileState(item, context, path, ops)) return null;
+      continue;
     }
+    const resolved = typeof item === "string" && item.startsWith("$.") ? scenarioReference(item, context) : resolveScenarioValue(item, context);
+    if (resolved === FAIL) return null; ops.push([key.push ? "push" : "set", path, resolved]);
   }
   return ops;
 }
@@ -1484,27 +1382,17 @@ function resolveStateAction(value, context) {
   for (const [key, item] of Object.entries(value)) {
     if (key !== "-") { patch[key] = item; continue; }
     if (!Array.isArray(item)) return null;
-    for (const name of item) {
-      const resolved = resolveScenarioValue(name, context);
-      const path = resolved.ok && statePath(resolved.value);
-      if (!path) return null;
-      remove.push(path);
-    }
+    for (const name of item) { const resolved = resolveScenarioValue(name, context), path = resolved !== FAIL && statePath(resolved); if (!path) return null; remove.push(path); }
   }
-  const ops = compileState(patch, context);
-  return ops ? { ops, remove } : null;
+  const ops = compileState(patch, context); return ops && { ops, remove };
 }
 
 function applyStateOps(root, ops) {
   for (const [op, path, value] of ops) {
     const parent = stateParent(root, path, true), leaf = path.at(-1);
-    if (op === "push") {
-      if (!own(parent, leaf)) parent[leaf] = [];
-      if (!Array.isArray(parent[leaf])) return false;
-      parent[leaf].push(structuredClone(value));
-    } else if (op === "object") {
-      if (!own(parent, leaf) || !parent[leaf] || typeof parent[leaf] !== "object" || Array.isArray(parent[leaf])) parent[leaf] = Object.create(null);
-    } else parent[leaf] = structuredClone(value);
+    if (op === "push") { if (!own(parent, leaf)) parent[leaf] = []; if (!Array.isArray(parent[leaf])) return false; parent[leaf].push(structuredClone(value)); }
+    else if (op === "object") { if (!own(parent, leaf) || !parent[leaf] || typeof parent[leaf] !== "object" || Array.isArray(parent[leaf])) parent[leaf] = Object.create(null); }
+    else parent[leaf] = structuredClone(value);
   }
   return true;
 }
@@ -1538,14 +1426,11 @@ export async function run(actions = []) {
 
       let result = null;
       const resolved = resolveScenarioValue(params, context);
-      if (resolved.ok) try {
-        const value = resolved.value ?? {};
+      if (resolved !== FAIL) try {
+        const value = resolved ?? {};
         if (name === "screenshot") result = await scenarioScreenshot(value, resources);
         else if (name === "screenshot_save") result = await scenarioScreenshotSave(value, resources);
-        else if (ACTIONS[name]) {
-          const prepared = resolveActionResources(name, value, resources);
-          if (prepared.ok) result = await ACTIONS[name](prepared.value);
-        }
+        else if (ACTIONS[name]) { const prepared = resolveActionResources(name, value, resources); if (prepared !== FAIL) result = await ACTIONS[name](prepared); }
       } catch { /* best effort */ }
       results.push(result);
       context.prev = result;

@@ -88,12 +88,14 @@ This scenario finds a Notepad window, remembers it, focuses it, types text, capt
     wpid: null
     woid: null
     depth: 0
+    zorder: 0
     title: "Untitled - Notepad"
     class: "Notepad"
     pid: 10308
     bin: "C:\\...\\Notepad.exe"
     display: 0
     rect: { x: 200, y: 120, width: 1200, height: 700 }
+    client: { x: 208, y: 151, width: 1184, height: 661 }
     status: normal
     hidden: false
     foreground: false
@@ -150,7 +152,8 @@ Every scenario action is an object with exactly one command key. The reference i
 
 **Accessibility and visual debugging**
 
-- [`a11y_find`](#a11y_find) — find accessibility elements.
+- [`a11y_find`](#a11y_find) — find accessibility elements and their supported actions.
+- [`a11y_action`](#a11y_action) — invoke a supported accessibility operation on one element.
 - [`highlight`](#highlight) — draw a temporary outline around a window or accessibility element.
 
 **Mouse**
@@ -158,9 +161,10 @@ Every scenario action is an object with exactly one command key. The reference i
 - [`mouse_move`](#mouse_move) — move the physical pointer.
 - [`mouse_button`](#mouse_button) — click, hold, release, or scroll.
 
-**Keyboard and clipboard**
+**Keyboard, input recovery, and clipboard**
 
 - [`keyb`](#keyb) — press keys or type Unicode text.
+- [`input_reset`](#input_reset) — release physical held input owned by AutoJS.
 - [`clipboard`](#clipboard) — read, write, or clear clipboard text.
 
 **Images and recognition**
@@ -203,6 +207,7 @@ An array of display records. A valid selector with no match returns `[]`.
 ```yaml
 - index: 0
   primary: true
+  scale: 1.25
   width: 1920
   height: 1200
   work: { width: 1920, height: 1140 }
@@ -370,7 +375,40 @@ A window record, or `null` when no native window exists at the resolved point.
 
 **Action output**
 
-An array of accessibility records. A valid search with no matches returns `[]`.
+An array of accessibility records. A valid search with no matches returns `[]`. Each record includes output-only `actions`, listing the native accessibility operations currently advertised by that element.
+
+---
+
+<br>
+
+## `a11y_action`
+
+*Apply one native accessibility operation to the first element matching an accessibility filter.*
+
+**Action input**
+
+- `a11y` — [accessibility filter](#accessibility-filters) selecting the target.
+- `action` — one of `invoke | select | toggle | expand | collapse | focus | set | scroll`.
+- `value` — text value used only by `set`; required for that action. An empty string explicitly clears the value when the native pattern allows it.
+
+`invoke`, `select`, `toggle`, `expand`, `collapse`, `set`, and `scroll` use the platform accessibility control patterns rather than synthesized mouse/keyboard input. `focus` uses the accessibility element's native focus operation. `scroll` means *scroll this element into view*.
+
+```yaml
+- a11y_action:
+    a11y:
+      type: button
+      name: "^Save$"
+    action: invoke
+
+- a11y_action:
+    a11y: { type: edit, aid: "^search$" }
+    action: set
+    value: "hello"
+```
+
+**Action output**
+
+The resulting accessibility record with an additional `action` field, or `null` when the target or requested native pattern is unavailable. Inside `run()`, failures use the normal scenario diagnostic object.
 
 ---
 
@@ -440,14 +478,15 @@ Exactly one of `window` or `a11y` must be supplied.
 - `click` — click `left | right | middle`.
 - `down` — press and hold `left | right | middle`.
 - `up` — release `left | right | middle`.
-- `wheel` — signed wheel detents; positive scrolls up and negative scrolls down.
+- `wheel` — signed vertical wheel detents; positive scrolls up and negative scrolls down.
+- `hwheel` — signed horizontal wheel detents; positive scrolls right and negative scrolls left.
 - `window` — optional [window filter](#window-filters). When supported, input is posted directly to that native window instead of moving the physical cursor.
 - `pos` — [position](#position-and-rectangle) for the operation; direct-window mode defaults to `centerWC`.
 - `display` — optional [display](#displays) geometry context.
 - `repeat` — positive integer, default `1`; valid only with `click`.
 - `interval` — [time value](#time-values) between repeated clicks, default `0`.
 
-Exactly one of `click`, `down`, `up`, or `wheel` is allowed.
+Exactly one of `click`, `down`, `up`, `wheel`, or `hwheel` is allowed.
 
 ```yaml
 - mouse_button:
@@ -457,6 +496,9 @@ Exactly one of `click`, `down`, `up`, or `wheel` is allowed.
 
 - mouse_button:
     wheel: -3
+
+- mouse_button:
+    hwheel: 2
 ```
 
 **Action output**
@@ -502,6 +544,28 @@ Named keys include letters and digits; Backspace, Tab, Enter, Escape and navigat
 **Action output**
 
 An object reporting each operation that was applied. Repeated `press` also reports `repeat`; `type` returns `typed` with the number of characters sent.
+
+---
+
+<br>
+
+## `input_reset`
+
+*Release physical keyboard keys and mouse buttons that AutoJS is currently holding through explicit `down` operations.*
+
+**Action input**
+
+No fields.
+
+```yaml
+- input_reset: {}
+```
+
+Only physical holds created by `keyb.down` and non-window `mouse_button.down` are owned and released. Direct-window posted input is not global physical input and is not part of this recovery state. Normal `press`/`click` operations release themselves immediately and therefore need no reset.
+
+**Action output**
+
+`{released: N}` where `N` is the number of held physical inputs released.
 
 ---
 
@@ -750,6 +814,7 @@ window:
   wpid: null
   woid: null                     # owner is separate from parent
   depth: 0                       # 0 = native top-level
+  zorder: 0                      # 0 = frontmost among siblings
   pid: 1234
   title: "^Untitled"
   bin: "notepad\\.exe$"
@@ -766,6 +831,7 @@ window:
 - `wpid` — immediate parent `wid`; `null` for top-level.
 - `woid` — owner `wid`; owner is independent from the parent tree.
 - `depth` — absolute parent-tree depth; top-level is `0`. `all` enables search at any depth without constraining the value.
+- `zorder` — zero-based native Z-order among windows sharing the same parent/sibling level; `0` is frontmost.
 - `pid` — process ID.
 - `title` — case-insensitive regex.
 - `bin` — case-insensitive regex over the executable path.
@@ -776,7 +842,7 @@ window:
 - `foreground` — boolean exact foreground state.
 - `up` / `down` — ancestor/descendant relation filters.
 
-Scalar-or-array fields: `wid`, `wpid`, `woid`, `depth`, `pid`, `title`, `bin`, `class`, `display`, `status`.
+Scalar-or-array fields: `wid`, `wpid`, `woid`, `depth`, `zorder`, `pid`, `title`, `bin`, `class`, `display`, `status`.
 
 Boolean fields stay scalar.
 
@@ -789,16 +855,20 @@ wid: "0x123456"
 wpid: null
 woid: null
 depth: 0
+zorder: 0
 title: "Untitled - Notepad"
 class: "Notepad"
 pid: 1234
 bin: "C:\\...\\Notepad.exe"
 display: 0
 rect: { x: 200, y: 120, width: 1200, height: 700 }
+client: { x: 208, y: 151, width: 1184, height: 661 }
 status: normal
 hidden: false
 foreground: true
 ```
+
+`client` is **output-only**: it is the native client/content rectangle in screen coordinates, the same geometry represented by `WC`. It is not a window filter because `WC` already provides the canonical client-area geometry language.
 
 ## Accessibility filters
 
@@ -819,6 +889,7 @@ a11y:
   focus: false
   focusable: true
   offscreen: false
+  actions: [invoke, focus]
 ```
 
 **Fields**
@@ -834,6 +905,8 @@ a11y:
 - `value` — accessible value, case-insensitive regex.
 - `enabled`, `focus`, `focusable`, `offscreen` — booleans when available.
 - `up` / `down` — accessibility-tree relation filters.
+
+`actions` is **output-only**. It lists the currently advertised operations from `a11y_action`; it is not a selector field.
 
 Scalar-or-array fields: `uid`, `wid`, `pid`, `aid`, `name`, `type`, `class`, `framework`, `value`.
 
@@ -854,6 +927,7 @@ enabled: true
 focus: false
 focusable: false
 offscreen: false
+actions: []
 ```
 
 ## `up` / `down`
@@ -917,7 +991,7 @@ A display target is:
 display: { index: 0 }
 ```
 
-Display index `0` is the primary display.
+Display index `0` is the primary display. Display records also expose `scale`, the native desktop scale factor as a ratio (`1`, `1.25`, `1.5`, …).
 
 ## Position and rectangle
 
@@ -1157,7 +1231,8 @@ The common structure is portable:
 - `a11y` as the accessibility domain;
 - explicit `up` / `down` relationships and cross-domain bridges;
 - shared `pos` / `rect` geometry and time syntax;
-- keyboard, mouse, clipboard, screenshot, OCR, and wait concepts;
+- keyboard, mouse, clipboard, screenshot, OCR, wait, and input-recovery concepts;
+- accessibility discovery plus native accessibility actions when the backend exposes them;
 - optional scenario state and run-scoped resources.
 
 Unavailable backend properties are optional capabilities. They must not be imitated with misleading semantics. A filter requiring an unavailable property does not match; an unsupported mutation follows normal best-effort behavior.
@@ -1168,8 +1243,10 @@ The current implementation is Windows x64 and is presently the richest backend:
 
 - `window` → HWND / User32.
 - `a11y` → Windows UI Automation Control View.
-- native parent and owner are distinct relationships.
-- physical input is supported; some mouse input can also be directed to a specific HWND.
+- native parent and owner are distinct relationships; window records also expose sibling `zorder` and output-only client geometry.
+- display records expose the native desktop `scale` ratio.
+- physical input supports vertical/horizontal wheel and owned-input recovery; some mouse input can also be directed to a specific HWND.
+- accessibility records expose supported native pattern actions, and `a11y_action` executes those patterns directly.
 - `window_set` can use native caption, frame/style, topmost, opacity, and enabled state.
 
 ## macOS

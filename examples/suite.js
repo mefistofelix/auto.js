@@ -141,6 +141,7 @@ const {
   display_find,
   window_find,
   a11y_find,
+  a11y_action,
   window_get,
   window_wait,
   window_control,
@@ -150,6 +151,7 @@ const {
   mouse_move,
   mouse_button,
   keyb,
+  input_reset,
   clipboard,
   ocr,
   wait,
@@ -224,8 +226,9 @@ try {
 
   const displays = display_find();
   assert(displays.length >= 1 && displays[0].primary, "primary display missing");
+  assert(Number.isFinite(displays[0].scale) && displays[0].scale > 0, "display scale missing");
   same(display_find({ display: { index: 0 } }).length, 1, "display target failed");
-  check("display_find");
+  check("display_find + scale");
 
   const allFixtureWindows = window_find({ window: { pid: child.pid, depth: "all" }, limit: 0 });
   assert(allFixtureWindows.length >= 7, "fixture native child tree incomplete");
@@ -239,6 +242,9 @@ try {
   const statusWindow = window_find({ window: { pid: child.pid, wpid: root.wid, title: `^${STATUS_PREFIX} 0$` }, limit: 1 })[0];
   const nestedWindow = window_find({ window: { pid: child.pid, title: "^NESTED CHILD$", depth: "all" }, limit: 1 })[0];
   assert(buttonWindow && editWindow && statusWindow && nestedWindow, "fixture child windows not found");
+  assert(root.client?.width > 0 && root.client?.height > 0, "window client rect missing");
+  assert(Number.isInteger(root.zorder) && root.zorder >= 0, "window zorder missing");
+  same(window_find({ window: { wid: root.wid, zorder: root.zorder }, limit: 1 })[0]?.wid, root.wid, "window zorder filter failed");
   same(window_get({ window: { wid: editWindow.wid }, text: true })?.text, EDIT_INITIAL, "window_get edit text failed");
   same(window_get({ window: { wid: statusWindow.wid }, text: true })?.text, `${STATUS_PREFIX} 0`, "window_get label text failed");
   same((await run([{ window_get: { window: { wid: editWindow.wid }, text: true } }]))[0]?.text, EDIT_INITIAL, "scenario window_get text failed");
@@ -269,6 +275,15 @@ try {
     limit: 1,
   })[0];
   assert(a11yButton, "accessible button not found through a11y -> window bridge");
+  assert(a11yButton.actions?.includes("invoke"), "accessible button invoke capability missing");
+  const a11yEdit = a11y_find({ a11y: { wid: editWindow.wid }, limit: 1 })[0];
+  assert(a11yEdit?.actions?.includes("set"), "accessible edit set capability missing");
+  const a11ySetText = `A11Y SET ${token}`;
+  same(a11y_action({ a11y: { wid: editWindow.wid }, action: "set", value: a11ySetText })?.action, "set", "a11y set action failed");
+  await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === a11ySetText, "a11y set did not update edit text");
+  a11y_action({ a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL });
+  await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === EDIT_INITIAL, "a11y set did not restore edit text");
+  same((await run([{ a11y_action: { a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL } }]))[0]?.action, "set", "scenario a11y_action failed");
   same(
     window_find({
       window: {
@@ -280,7 +295,7 @@ try {
     root.wid,
     "window -> a11y bridge failed",
   );
-  check("a11y filters, limit, cross-domain relations");
+  check("a11y filters, capabilities, actions, limit, cross-domain relations");
 
   assert(await window_wait({ window: { wid: root.wid }, timeout: 500, interval: 20 }), "window_wait failed");
   assert(await wait({ window: { wid: root.wid }, timeout: 0 }), "wait.window immediate match failed");
@@ -363,6 +378,9 @@ try {
   const clientPoint = await mouse_move({ window: { wid: root.wid }, pos: { at: "centerWC", x: "+10", y: "-10" } });
   assert(clientPoint?.pos, "mouse_move WC geometry failed");
   let clicks = 0;
+  same(a11y_action({ a11y: { wid: buttonWindow.wid }, action: "invoke" })?.action, "invoke", "a11y invoke action failed");
+  clicks++;
+  assert(await wait({ window: { wid: statusWindow.wid, title: `^${STATUS_PREFIX} ${clicks}$` }, timeout: 1000, interval: 20 }), "a11y invoke did not update fixture status");
   if (interactiveDesktop) {
     await mouse_move({ pos: buttonCenter });
     mouse_button({ click: "left" });
@@ -397,7 +415,9 @@ try {
   );
   const wheel = mouse_button({ window: { wid: root.wid }, wheel: 1 });
   same(wheel?.wheel, 1, "direct-target mouse wheel failed");
-  check("mouse_button direct click/wheel");
+  const hwheel = mouse_button({ window: { wid: root.wid }, hwheel: 1 });
+  same(hwheel?.hwheel, 1, "direct-target horizontal mouse wheel failed");
+  check("mouse_button direct click/wheel/hwheel");
 
   root = window_get({ window: { wid: root.wid } });
   if (interactiveDesktop && root?.foreground) {
@@ -433,8 +453,12 @@ try {
     const up = await keyb({ up: "shift" });
     same(down.down[0], "shift", "keyb down failed");
     same(up.up[0], "shift", "keyb up failed");
+    const held = await keyb({ down: "ctrl" });
+    same(held.down[0], "ctrl", "keyb held input for reset failed");
+    assert(input_reset().released >= 1, "input_reset did not release held keyboard input");
+    same((await run([{ input_reset: {} }]))[0]?.released, 0, "scenario input_reset failed");
     await eventually(() => editValue() === finalText, "final keyboard text did not remain in fixture edit");
-    check("keyb press/type/down/up/repeat/layout mapping");
+    check("keyb press/type/down/up/repeat/layout mapping + input_reset");
   } else {
     console.log("↷ keyb injection verification skipped: fixture is not foreground on an interactive desktop");
   }

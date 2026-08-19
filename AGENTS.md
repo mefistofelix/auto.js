@@ -56,6 +56,7 @@ Prefer micro-actions that compose cleanly instead of large opaque helpers. Examp
 - `display_find({display?})`
 - `window_find({window?, limit?})`
 - `a11y_find({a11y?, limit?})`
+- `a11y_action({a11y?, action, value?})`
 - `window_get({window?, text?})`
 - `window_wait({window?, timeout?, interval?})
 - `window_control({window?, display?, action, pos?, rect?})`
@@ -64,8 +65,9 @@ Prefer micro-actions that compose cleanly instead of large opaque helpers. Examp
 - `highlight({window?, a11y?, duration?})`
 - `ocr({window?, display?, rect?, all?, image?})`
 - `mouse_move({pos?, display?, duration?, steps?, window?})`
-- `mouse_button({click?, down?, up?, wheel?, window?, display?, pos?, repeat?, interval?})`
+- `mouse_button({click?, down?, up?, wheel?, hwheel?, window?, display?, pos?, repeat?, interval?})`
 - `keyb({press?, down?, up?, type?, repeat?, interval?})`
+- `input_reset()`
 - `clipboard({read? | write? | clear?})`
 - `system({wake? | awake?})` (`system({})` queries lock state)
 - `wait(time | {timeout?, interval?, not?, window?, ocr?, image?, change?})`
@@ -113,6 +115,7 @@ Keep one common window filter vocabulary. Whenever a command selects a window, t
 - `wpid` — exact immediate parent `wid`, including `null` for top-level.
 - `woid` — exact owner `wid`, including `null`; owner is parallel to and never part of the parent tree.
 - `depth` — exact parent-tree depth (`0` top-level), or `all` to traverse all depths without constraining it.
+- `zorder` — zero-based native Z-order within the same sibling level; `0` is frontmost.
 - `pid` — exact process ID.
 - `title` — case-insensitive regex.
 - `bin` — case-insensitive regex against the full executable path.
@@ -123,7 +126,7 @@ Keep one common window filter vocabulary. Whenever a command selects a window, t
 - `foreground` — boolean.
 - `up` / `down` — relation filters. Unwrapped relations traverse the HWND parent tree; local `depth` is traversal distance, default `1`, or `all`. A wrapped `a11y: {...}` switches that relation to the accessibility tree; on Windows this is the UI Automation Control View.
 
-All fields inside `window` are optional and ANDed. `wid`, `wpid`, `woid`, `depth`, `pid`, `title`, `bin`, `class`, `display`, and `status` also accept arrays; alternatives inside one field are ORed while different fields remain ANDed. Empty arrays match nothing. Boolean filters remain scalar. `window_find({})` returns only true depth-0 top-level windows. Tree traversal is opt-in through `wid`, `wpid`, `depth`, `up`, or `down`; `woid` remains an independent owner filter. Regex covers title/class/bin cases such as `pdfa`, `^pdfa$`, `notepad\\.exe$`.
+All fields inside `window` are optional and ANDed. `wid`, `wpid`, `woid`, `depth`, `zorder`, `pid`, `title`, `bin`, `class`, `display`, and `status` also accept arrays; alternatives inside one field are ORed while different fields remain ANDed. Empty arrays match nothing. Boolean filters remain scalar. `window_find({})` returns only true depth-0 top-level windows. Tree traversal is opt-in through `wid`, `wpid`, `depth`, `up`, or `down`; `woid` remains an independent owner filter. Regex covers title/class/bin cases such as `pdfa`, `^pdfa$`, `notepad\\.exe$`.
 
 Window IDs are serialized under `wid`, `wpid`, and `woid` as pointer strings such as `"0x123456"`, never JavaScript `BigInt`, so they remain JSON-compatible.
 
@@ -134,16 +137,20 @@ wid: "0x123456"
 wpid: null
 woid: null
 depth: 0
+zorder: 0
 title: "Notepad"
 class: "Notepad"
 pid: 1234
 bin: "C:\\Program Files\\WindowsApps\\...\\Notepad.exe"
 display: 0
 rect: { x: 300, y: 200, width: 900, height: 700 }
+client: { x: 308, y: 231, width: 884, height: 661 }
 status: normal
 hidden: false
 foreground: true
 ```
+
+`client` is output-only and is the native client/content rectangle in screen coordinates, equivalent to the `WC` geometry reference. Do not add it as a filter or duplicate WC geometry semantics.
 
 `bin` is the full executable path resolved from the HWND's PID with `OpenProcess` + `QueryFullProcessImageNameW`. The basename is not exposed separately; use a suffix regex such as `notepad\\.exe$` when only the executable name matters.
 
@@ -183,7 +190,9 @@ a11y:
 
 On the current Windows backend, `a11y` is implemented with Windows UI Automation Control View. `window -> a11y` converts the starting HWND with `ElementFromHandle`; `a11y -> window` traverses UIA and tests nodes exposing a real NativeWindowHandle. Internal helpers may keep `uia*` names because they are Windows-backend implementation details, but the public AAF vocabulary must remain `a11y` / `a11y_find`.
 
-`a11y_find({a11y: {...}})` always returns accessibility records even when a relation references `window`; `window_find()` always returns window records even when a relation references `a11y`. Results are JSON-compatible and include `{uid, wid, aid, name, type, class, framework, pid, rect, value, enabled, focus, focusable, offscreen}`. `wid` may be `null`; accessibility `offscreen` remains independent from `window.hidden`.
+`a11y_find({a11y: {...}})` always returns accessibility records even when a relation references `window`; `window_find()` always returns window records even when a relation references `a11y`. Results are JSON-compatible and include `{uid, wid, aid, name, type, class, framework, pid, rect, value, enabled, focus, focusable, offscreen, actions}`. `wid` may be `null`; accessibility `offscreen` remains independent from `window.hidden`.
+
+`actions` is output-only and lists the native operations currently advertised by the element. `a11y_action({a11y, action, value?})` resolves one target from scratch and supports `invoke|select|toggle|expand|collapse|focus|set|scroll`; `set` requires `value`, and `scroll` means scroll-into-view. Use native accessibility patterns, never synthesize mouse/keyboard input as a substitute for these actions.
 
 Implementation stays dependency-free: instantiate `CUIAutomation` through COM, use `ElementFromHandle` and the Control View `IUIAutomationTreeWalker`, read current element properties directly from `IUIAutomationElement`, and use RuntimeId only as an opaque current identity. Caching COM automation/walker interfaces is infrastructure only; never cache selectors, resolved elements, RuntimeIds, or scenario state across actions.
 
@@ -198,12 +207,13 @@ Public display identity is only the integer `index`. Internal monitor handles, d
 ```yaml
 - index: 0
   primary: true
+  scale: 1.25
   width: 1920
   height: 1200
   work: { width: 1920, height: 1140 }
 ```
 
-Display index `0` is the primary display after sorting.
+Display index `0` is the primary display after sorting. `scale` is the native desktop scale factor as a ratio (`1`, `1.25`, `1.5`, ...), not a percentage.
 
 Geometry rules:
 
@@ -256,9 +266,9 @@ Do not replace this with Tesseract or a subprocess.
 
 ## Input
 
-Physical keyboard/mouse injection uses Windows `SendInput`; smooth pointer movement uses interpolated `SetCursorPos` calls so movement duration is explicit and scenario-friendly. `mouse_button` accepts exactly one of `click`, `down`, `up`, or `wheel`. `click/down/up` use `left|right|middle`; signed `wheel` values are standard wheel detents (`+` up, `-` down). `repeat` is a positive integer defaulting to `1` and is valid only with `click`; `interval` is the AAF delay between repeated clicks. Without `window`, input is physical and an explicit `pos` moves the real cursor before the action. With `window`, mouse input is posted directly to that resolved HWND without moving the physical cursor; button coordinates are client-relative internally, wheel coordinates screen-relative, while AAF `pos` remains one unified screen-space geometry model. When direct `window` targeting has no `pos`, use `centerWC`. Return the resolved screen `pos` and include `wid` only for direct-target mode.
+Physical keyboard/mouse injection uses Windows `SendInput`; smooth pointer movement uses interpolated `SetCursorPos` calls so movement duration is explicit and scenario-friendly. `mouse_button` accepts exactly one of `click`, `down`, `up`, `wheel`, or `hwheel`. `click/down/up` use `left|right|middle`; signed `wheel` values are vertical wheel detents (`+` up, `-` down), while signed `hwheel` values are horizontal detents (`+` right, `-` left). `repeat` is a positive integer defaulting to `1` and is valid only with `click`; `interval` is the AAF delay between repeated clicks. Without `window`, input is physical and an explicit `pos` moves the real cursor before the action. With `window`, mouse input is posted directly to that resolved HWND without moving the physical cursor; button coordinates are client-relative internally, wheel coordinates screen-relative, while AAF `pos` remains one unified screen-space geometry model. When direct `window` targeting has no `pos`, use `centerWC`. Return the resolved screen `pos` and include `wid` only for direct-target mode.
 
-Keyboard input is exposed through the single `keyb` command. `press` is key down+up, while `down` and `up` hold/release named keys. `keyb({press: ["ctrl", "z"]})` presses and releases a chord; scalar `press` handles one key. A single printable character supplied to `press`, such as `"@"` or `"€"`, is translated through the foreground thread's active keyboard layout using `VkKeyScanExW`; Ctrl+Alt mappings use right Alt / AltGr semantics. Named keys cover the canonical Windows keyboard set including Backspace/Tab/navigation, Caps/Num/Scroll Lock, Print Screen, left/right modifiers and Windows keys, numpad, F1-F24, Apps/context-menu, and common browser/media/volume/launch keys; numeric VK codes remain accepted. Use `MapVirtualKeyExW(..., MAPVK_VK_TO_VSC_EX)` to detect extended keys instead of maintaining an extended-key list. `repeat` is a positive integer defaulting to `1` and is valid only with `press`; `interval` is the delay between repeated presses. `keyb({down: "ctrl"})` holds a key and `keyb({up: "ctrl"})` releases it, so long holds compose naturally as `down` → `wait` → `up` without any keyboard `duration` field. `keyb({type: "hello", interval: 35})` types text with `KEYEVENTF_UNICODE`, independent of keyboard layout, except line breaks: `\n`, `\r`, and `\r\n` become one real `VK_RETURN`; for `type`, `interval` is the delay between characters. Unknown/unusable keys are skipped rather than making the whole command fail.
+Keyboard input is exposed through the single `keyb` command. `press` is key down+up, while `down` and `up` hold/release named keys. `keyb({press: ["ctrl", "z"]})` presses and releases a chord; scalar `press` handles one key. A single printable character supplied to `press`, such as `"@"` or `"€"`, is translated through the foreground thread's active keyboard layout using `VkKeyScanExW`; Ctrl+Alt mappings use right Alt / AltGr semantics. Named keys cover the canonical Windows keyboard set including Backspace/Tab/navigation, Caps/Num/Scroll Lock, Print Screen, left/right modifiers and Windows keys, numpad, F1-F24, Apps/context-menu, and common browser/media/volume/launch keys; numeric VK codes remain accepted. Use `MapVirtualKeyExW(..., MAPVK_VK_TO_VSC_EX)` to detect extended keys instead of maintaining an extended-key list. `repeat` is a positive integer defaulting to `1` and is valid only with `press`; `interval` is the delay between repeated presses. `keyb({down: "ctrl"})` holds a key and `keyb({up: "ctrl"})` releases it, so long holds compose naturally as `down` → `wait` → `up` without any keyboard `duration` field. `keyb({type: "hello", interval: 35})` types text with `KEYEVENTF_UNICODE`, independent of keyboard layout, except line breaks: `\n`, `\r`, and `\r\n` become one real `VK_RETURN`; for `type`, `interval` is the delay between characters. Unknown/unusable keys are skipped rather than making the whole command fail. Track only explicit physical holds created by `keyb.down` and non-window `mouse_button.down`; `input_reset()` releases those owned inputs and returns `{released}`. Direct-window posted input is not global physical input and must not be tracked by this recovery state.
 
 ## Clipboard
 
@@ -272,7 +282,7 @@ Clipboard text uses `CF_UNICODETEXT` through the native Win32 clipboard APIs. Cl
 
 ## Current end-to-end tests
 
-`examples/suite.js` is the primary self-contained regression suite. It launches a private Win32 fixture process implemented inside the example itself, creates a unique top-level window plus native Edit/Button/Static/nested child controls, and asserts behavior instead of merely exercising calls. It covers system lock detection/wake/awake; displays; native window filters/tree relations/limits and cross-process `window_get(..., text: true)`; accessibility filters/limits and window↔a11y bridges; wait/window_wait; window control/set/highlight/hit; W/WC geometry; physical and direct-target mouse input including repeated clicks; clipboard; `keyb` press/chords/type/down/up, repeated presses, and active-layout character mapping; screenshot/OCR; wait OCR/image/change; and `run` references/interpolation/state push/delete plus screenshot resource lifetime. Temporary files, clipboard contents, cursor position, fixture window/process, awake state, and screenshot resources are cleaned up best-effort. Physical desktop assertions are skipped only when another system surface prevents the fixture from being interactively hit.
+`examples/suite.js` is the primary self-contained regression suite. It launches a private Win32 fixture process implemented inside the example itself, creates a unique top-level window plus native Edit/Button/Static/nested child controls, and asserts behavior instead of merely exercising calls. It covers system lock detection/wake/awake; displays including scale; native window filters/tree relations/limits, Z-order, output client rect, and cross-process `window_get(..., text: true)`; accessibility filters/capabilities/actions/limits and window↔a11y bridges; wait/window_wait; window control/set/highlight/hit; W/WC geometry; physical and direct-target mouse input including repeated clicks and horizontal wheel; clipboard; `keyb` press/chords/type/down/up, repeated presses, active-layout character mapping, and input reset; screenshot/OCR; wait OCR/image/change; and `run` references/interpolation/state push/delete plus screenshot resource lifetime. Temporary files, clipboard contents, cursor position, fixture window/process, awake state, and screenshot resources are cleaned up best-effort. Physical desktop assertions are skipped only when another system surface prevents the fixture from being interactively hit.
 
 Run it before and after implementation simplification:
 

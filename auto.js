@@ -12,14 +12,15 @@ const gdi32 = dll("gdi32.dll", `CreateCompatibleDC pointer pointer; DeleteDC i32
 const ntdll = dll("ntdll.dll", `RtlMoveMemory void pointer buffer usize`);
 const wtsapi32 = dll("wtsapi32.dll", `WTSQuerySessionInformationW i32 pointer u32 u32 buffer buffer; WTSFreeMemory void pointer`);
 const ole32 = dll("ole32.dll", `CoInitializeEx i32 pointer u32; CoCreateInstance i32 buffer pointer u32 buffer buffer`);
-const oleaut32 = dll("oleaut32.dll", `SysStringLen u32 pointer; SysFreeString void pointer; SafeArrayGetLBound i32 pointer u32 buffer; SafeArrayGetUBound i32 pointer u32 buffer; SafeArrayAccessData i32 pointer buffer; SafeArrayUnaccessData i32 pointer; SafeArrayDestroy i32 pointer; VariantClear i32 buffer`);
+const oleaut32 = dll("oleaut32.dll", `SysAllocString pointer buffer; SysStringLen u32 pointer; SysFreeString void pointer; SafeArrayGetLBound i32 pointer u32 buffer; SafeArrayGetUBound i32 pointer u32 buffer; SafeArrayAccessData i32 pointer buffer; SafeArrayUnaccessData i32 pointer; SafeArrayDestroy i32 pointer; VariantClear i32 buffer`);
 const combase = dll("combase.dll", `RoInitialize i32 u32; RoGetActivationFactory i32 pointer buffer buffer; WindowsCreateString i32 buffer u32 buffer; WindowsDeleteString i32 pointer; WindowsGetStringRawBuffer pointer pointer buffer`);
+const shcore = dll("shcore.dll", `GetScaleFactorForMonitor i32 pointer buffer`);
 try { user32.symbols.SetProcessDPIAware(); } catch { /* already configured is fine */ }
 const textDecoder16 = new TextDecoder("utf-16le"), POINTER_SIZE = 8, CF_UNICODETEXT = 13, PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, MONITOR_DEFAULTTONEAREST = 2, SRCCOPY = 0x00cc0020, PW_RENDERFULLCONTENT = 2;
-const WM_CLOSE = 0x10, WM_SETTEXT = 0x0c, WM_GETTEXT = 0x0d, WM_GETTEXTLENGTH = 0x0e, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205, WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208, WM_MOUSEWHEEL = 0x20a;
-const GA_PARENT = 1, GA_ROOT = 2, GW_OWNER = 4, GWL_STYLE = -16, GWL_EXSTYLE = -20, WS_CHILD = 0x40000000, WS_BORDER = 0x00800000, WS_DLGFRAME = 0x00400000, WS_CAPTION = WS_BORDER | WS_DLGFRAME;
+const WM_CLOSE = 0x10, WM_SETTEXT = 0x0c, WM_GETTEXT = 0x0d, WM_GETTEXTLENGTH = 0x0e, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205, WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208, WM_MOUSEWHEEL = 0x20a, WM_MOUSEHWHEEL = 0x20e;
+const GA_PARENT = 1, GA_ROOT = 2, GW_HWNDPREV = 3, GW_OWNER = 4, GWL_STYLE = -16, GWL_EXSTYLE = -20, WS_CHILD = 0x40000000, WS_BORDER = 0x00800000, WS_DLGFRAME = 0x00400000, WS_CAPTION = WS_BORDER | WS_DLGFRAME;
 const WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000, WS_EX_LAYERED = 0x00080000, LWA_ALPHA = 2, FRAME_STYLE_MASK = WS_BORDER | WS_DLGFRAME | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-const SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOZORDER = 4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20, INPUT_MOUSE = 0, INPUT_KEYBOARD = 1, KEYEVENTF_EXTENDEDKEY = 1, KEYEVENTF_KEYUP = 2, KEYEVENTF_UNICODE = 4, MOUSEEVENTF_WHEEL = 0x0800, WHEEL_DELTA = 120;
+const SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOZORDER = 4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20, INPUT_MOUSE = 0, INPUT_KEYBOARD = 1, KEYEVENTF_EXTENDEDKEY = 1, KEYEVENTF_KEYUP = 2, KEYEVENTF_UNICODE = 4, MOUSEEVENTF_WHEEL = 0x0800, MOUSEEVENTF_HWHEEL = 0x1000, WHEEL_DELTA = 120;
 function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 function timeMs(value, fallback = 0) {
   if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
@@ -66,11 +67,12 @@ function processPath(pid) {
   try { const buffer = new Uint16Array(32768), size = new Uint32Array([buffer.length]); return kernel32.symbols.QueryFullProcessImageNameW(handle, 0, buffer, size) ? decodeWide(buffer, size[0]) : ""; }
   finally { kernel32.symbols.CloseHandle(handle); }
 }
+function monitorScale(monitor) { const scale = new Int32Array([100]); return shcore.symbols.GetScaleFactorForMonitor(monitor, scale) >= 0 ? scale[0] / 100 : 1; }
 function displayRecords() {
   const found = [], callback = new Deno.UnsafeCallback({ parameters: ["pointer", "pointer", "pointer", "pointer"], result: "i32" }, (monitor) => {
     const info = new Uint8Array(104), view = new DataView(info.buffer); view.setUint32(0, 104, true);
     if (!user32.symbols.GetMonitorInfoW(monitor, info)) return 1;
-    found.push({ id: decodeWide(new Uint16Array(info.buffer, 40, 32)).split("\0", 1)[0], handle: ptrId(monitor), primary: !!(view.getUint32(36, true) & 1), ...viewRect(view, 4), work: viewRect(view, 20) });
+    found.push({ id: decodeWide(new Uint16Array(info.buffer, 40, 32)).split("\0", 1)[0], handle: ptrId(monitor), primary: !!(view.getUint32(36, true) & 1), scale: monitorScale(monitor), ...viewRect(view, 4), work: viewRect(view, 20) });
     return 1;
   });
   try { if (!user32.symbols.EnumDisplayMonitors(null, null, callback.pointer, null)) throw new Error("EnumDisplayMonitors failed"); }
@@ -79,7 +81,7 @@ function displayRecords() {
   return found.map((display, index) => ({ index, ...display }));
 }
 export function display_find({ display } = {}) {
-  const found = displayRecords().map(({ index, primary, width, height, work }) => ({ index, primary, width, height, work: { width: work.width, height: work.height } }));
+  const found = displayRecords().map(({ index, primary, scale, width, height, work }) => ({ index, primary, scale, width, height, work: { width: work.width, height: work.height } }));
   if (display == null) return found;
   const index = Number(typeof display === "object" ? display.index : display);
   return Number.isInteger(index) ? found.filter((x) => x.index === index) : [];
@@ -104,6 +106,11 @@ function clientRect(hwnd) {
 function isChildWindow(hwnd) { return !!(user32.symbols.GetWindowLongW(hwnd, GWL_STYLE) & WS_CHILD); }
 function windowParent(hwnd) { return isChildWindow(hwnd) ? user32.symbols.GetAncestor(hwnd, GA_PARENT) : null; }
 function windowOwner(hwnd) { return isChildWindow(hwnd) ? null : user32.symbols.GetWindow(hwnd, GW_OWNER); }
+function windowZOrder(hwnd) {
+  let zorder = 0, current = hwnd; const seen = new Set([ptrId(hwnd).toLowerCase()]);
+  while (zorder < 10000 && (current = user32.symbols.GetWindow(current, GW_HWNDPREV))) { const id = ptrId(current).toLowerCase(); if (seen.has(id)) break; seen.add(id); zorder++; }
+  return zorder;
+}
 function windowDepth(hwnd) {
   let depth = 0, current = hwnd; const seen = new Set();
   while (current && isChildWindow(current) && depth < 256) {
@@ -118,9 +125,9 @@ function getWindowInfo(hwnd, monitors = displayMap()) {
   const parent = windowParent(hwnd), owner = windowOwner(hwnd), monitor = user32.symbols.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
   const minimized = !!user32.symbols.IsIconic(hwnd), maximized = !!user32.symbols.IsZoomed(hwnd);
   return {
-    wid: ptrId(hwnd), wpid: parent ? ptrId(parent) : null, woid: owner ? ptrId(owner) : null, depth: windowDepth(hwnd),
+    wid: ptrId(hwnd), wpid: parent ? ptrId(parent) : null, woid: owner ? ptrId(owner) : null, depth: windowDepth(hwnd), zorder: windowZOrder(hwnd),
     title: windowText(hwnd), class: windowClass(hwnd), pid, bin: processPath(pid), display: monitors.get(monitor ? ptrId(monitor).toLowerCase() : "")?.index ?? null,
-    rect: user32.symbols.GetWindowRect(hwnd, buffer) ? rectFromBuffer(buffer) : { x: 0, y: 0, width: 0, height: 0 },
+    rect: user32.symbols.GetWindowRect(hwnd, buffer) ? rectFromBuffer(buffer) : { x: 0, y: 0, width: 0, height: 0 }, client: clientRect(hwnd),
     status: minimized ? "minimized" : maximized ? "maximized" : "normal", hidden: !user32.symbols.IsWindowVisible(hwnd),
     foreground: ptrValue(user32.symbols.GetForegroundWindow()) === ptrValue(hwnd), _tid: tid,
   };
@@ -152,7 +159,7 @@ function windowTree(records) {
 }
 const WINDOW_FIELDS = {
   wid: [false, filterId], wpid: [true, filterId], woid: [true, filterId],
-  depth: [false, (a, b) => anyFilter(b, (v) => String(v).toLowerCase() === "all" || a === Number(v))],
+  depth: [false, (a, b) => anyFilter(b, (v) => String(v).toLowerCase() === "all" || a === Number(v))], zorder: [false, filterNum],
   pid: [false, filterNum], title: [false, regexFilter], bin: [false, regexFilter], class: [false, regexFilter],
   display: [false, (a, b) => anyFilter(b, (v) => a === resolveDisplay(v).index)], status: [false, filterString],
   hidden: [false, filterBool], foreground: [false, filterBool],
@@ -491,13 +498,14 @@ function postMouseButton(hwnd, spec, down, point) {
   const pos = { x: point.x - client.x, y: point.y - client.y };
   if (!user32.symbols.PostMessageW(hwnd, spec.message[down ? 0 : 1], BigInt(down ? spec.state : 0), packMousePoint(pos))) throw new Error("PostMessage(mouse button) failed");
 }
-function postMouseWheel(hwnd, amount, point) {
-  const wParam = BigInt(((Math.round(amount * WHEEL_DELTA) & 0xffff) << 16) >>> 0);
-  if (!user32.symbols.PostMessageW(hwnd, WM_MOUSEWHEEL, wParam, packMousePoint(point))) throw new Error("PostMessage(mouse wheel) failed");
+function postMouseWheel(hwnd, amount, point, horizontal = false) {
+  const wParam = BigInt(((Math.round(amount * WHEEL_DELTA) & 0xffff) << 16) >>> 0), message = horizontal ? WM_MOUSEHWHEEL : WM_MOUSEWHEEL;
+  if (!user32.symbols.PostMessageW(hwnd, message, wParam, packMousePoint(point))) throw new Error(`PostMessage(mouse ${horizontal ? "horizontal " : ""}wheel) failed`);
 }
-export function mouse_button({ click, down, up, wheel, window, display, pos, repeat = 1, interval = 0 } = {}) {
-  const actions = Object.entries({ click, down, up, wheel }).filter(([, value]) => value != null);
-  if (actions.length !== 1) throw new Error("mouse_button requires exactly one of click, down, up, wheel");
+const heldMouse = new Set();
+export function mouse_button({ click, down, up, wheel, hwheel, window, display, pos, repeat = 1, interval = 0 } = {}) {
+  const actions = Object.entries({ click, down, up, wheel, hwheel }).filter(([, value]) => value != null);
+  if (actions.length !== 1) throw new Error("mouse_button requires exactly one of click, down, up, wheel, hwheel");
   const [action, value] = actions[0];
   if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`Invalid repeat: ${repeat}`);
   if (repeat !== 1 && action !== "click") throw new Error("mouse_button repeat is only valid with click");
@@ -505,18 +513,18 @@ export function mouse_button({ click, down, up, wheel, window, display, pos, rep
   if (window != null && !info) return null;
   const target = mouseTarget(info, display, pos, info ? "centerWC" : null), point = target?.to, direct = !!info;
   if (!point || (!direct && pos != null && !user32.symbols.SetCursorPos(point.x, point.y))) return null;
-  if (action === "wheel") {
-    const amount = Number(value);
-    if (!Number.isFinite(amount)) throw new Error(`Invalid wheel amount: ${value}`);
-    direct ? postMouseWheel(asPointer(info.wid), amount, point) : mouseInput(MOUSEEVENTF_WHEEL, Math.round(amount * WHEEL_DELTA));
-    return { wheel: amount, ...(direct && { wid: info.wid }), pos: point };
+  if (action === "wheel" || action === "hwheel") {
+    const amount = Number(value), horizontal = action === "hwheel";
+    if (!Number.isFinite(amount)) throw new Error(`Invalid ${action} amount: ${value}`);
+    direct ? postMouseWheel(asPointer(info.wid), amount, point, horizontal) : mouseInput(horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL, Math.round(amount * WHEEL_DELTA));
+    return { [action]: amount, ...(direct && { wid: info.wid }), pos: point };
   }
   const button = String(value).toLowerCase(), spec = mouseButtons[button];
   if (!spec) throw new Error(`Unknown mouse button: ${value}`);
   const send = (down) => direct ? postMouseButton(asPointer(info.wid), spec, down, point) : mouseInput(spec.input[down ? 0 : 1]);
   interval = timeMs(interval);
   if (action === "click") for (let i = 0; i < repeat; i++) { send(true); send(false); if (interval && i + 1 < repeat) sleepSync(interval); }
-  else send(action === "down");
+  else { const isDown = action === "down"; send(isDown); if (!direct) isDown ? heldMouse.add(button) : heldMouse.delete(button); }
   return { [action]: button, ...(repeat !== 1 && { repeat }), ...(direct && { wid: info.wid }), pos: point };
 }
 const VK = Object.fromEntries([
@@ -550,6 +558,7 @@ function keyFlags(vk, layout, up = false) {
   return ((prefix === 0xe0 || prefix === 0xe1) ? KEYEVENTF_EXTENDEDKEY : 0) | (up ? KEYEVENTF_KEYUP : 0);
 }
 function sendVirtualKey(vk, down, layout = foregroundKeyboardLayout()) { keyboardInput(vk, 0, keyFlags(vk, layout, !down)); }
+const heldKeys = new Map();
 function keySequence(name, layout) {
   const vk = virtualKey(name);
   if (vk != null) return [vk];
@@ -564,7 +573,7 @@ function keySequence(name, layout) {
 function keyState(name, down) {
   const layout = foregroundKeyboardLayout(), keys = keySequence(name, layout);
   if (!keys || keys.length !== 1) return false;
-  try { sendVirtualKey(keys[0], down, layout); return true; } catch { return false; }
+  try { sendVirtualKey(keys[0], down, layout); down ? heldKeys.set(keys[0], layout) : heldKeys.delete(keys[0]); return true; } catch { return false; }
 }
 function keyNames(value) { return Array.isArray(value) ? value : value == null ? [] : [value]; }
 async function pressKeys(value) {
@@ -620,6 +629,12 @@ export async function keyb({ press, down, up, type, repeat = 1, interval = 0 } =
   if (up != null) result.up = keyNames(up).filter((name) => keyState(name, false));
   if (type != null) result.typed = await typeText(String(type), interval);
   return result;
+}
+export function input_reset() {
+  let released = 0;
+  for (const [vk, layout] of [...heldKeys]) { try { sendVirtualKey(vk, false, layout); released++; } catch {} heldKeys.delete(vk); }
+  for (const button of [...heldMouse]) { try { mouseInput(mouseButtons[button].input[1]); released++; } catch {} heldMouse.delete(button); }
+  return { released };
 }
 function openClipboard() {
   for (let i = 0; i < 20; i++) { if (user32.symbols.OpenClipboard(null)) return; sleepSync(5); }
@@ -729,7 +744,12 @@ function uiaVariant(e,id) {
 function uiaTypeName(id) { return id == null ? null : UIA_TYPES[Number(id) - 50000] ?? String(id); }
 function normalizeUiaType(value) { return typeof value === "number" ? uiaTypeName(value) : String(value ?? "").trim().toLowerCase().replace(/[_\s]+/g, "-"); }
 const UIA_RECORD = [["pid",20,uiaInt],["name",23,uiaBstr],["focus",26,uiaBool],["focusable",27,uiaBool],["enabled",28,uiaBool],["aid",29,uiaBstr],["class",30,uiaBstr],["offscreen",38,uiaBool],["framework",40,uiaBstr]];
-function uiaRecord(e) { const runtime = uiaRuntimeId(e), record = {uid:runtime?.join(".") ?? null,wid:uiaNativeWid(e),type:uiaTypeName(uiaInt(e,21)),rect:uiaRect(e),value:uiaVariant(e,30045)}; for (const [key,index,get] of UIA_RECORD) record[key] = get(e,index); return record; }
+const UIA_PATTERNS = [
+  [10000,30031,["invoke"]], [10010,30036,["select"]], [10015,30041,["toggle"]],
+  [10005,30028,["expand","collapse"]], [10002,30043,["set"]], [10017,30035,["scroll"]],
+];
+function uiaActions(e, focusable) { const actions = []; for (const [,available,names] of UIA_PATTERNS) if (uiaVariant(e,available) === true) actions.push(...names); if (focusable) actions.push("focus"); return actions; }
+function uiaRecord(e) { const runtime = uiaRuntimeId(e), record = {uid:runtime?.join(".") ?? null,wid:uiaNativeWid(e),type:uiaTypeName(uiaInt(e,21)),rect:uiaRect(e),value:uiaVariant(e,30045)}; for (const [key,index,get] of UIA_RECORD) record[key] = get(e,index); record.actions = uiaActions(e,record.focusable); return record; }
 function normalizeUiaFilter(filter) { return filter == null ? {} : typeof filter === "string" ? {name:filter} : filter; }
 const A11Y_FIELDS = {uid:[false,filterExact],wid:[true,filterId],pid:[false,filterNum],aid:[false,regexFilter],name:[false,regexFilter],type:[false,(a,b)=>anyFilter(b,v=>a===normalizeUiaType(v))],class:[false,regexFilter],framework:[false,regexFilter],value:[false,regexFilter],enabled:[false,filterBool],focus:[false,filterBool],focusable:[false,filterBool],offscreen:[false,filterBool]};
 function matchesUiaOwn(record,filter) { return matchesFields(record,filter,A11Y_FIELDS); }
@@ -762,6 +782,38 @@ export function a11y_find({a11y={},limit=0}={}) {
   const collect=(root,depth)=>comUse(root,e=>uiaCollectFromRoot(e,filter,depth,found,seen,max));
   if (own(filter,"wid") && filter.wid!=null && !Array.isArray(filter.wid)) { const record=comUse(uiaElementFromHandle(asPointer(filter.wid)),e=>{ const value=uiaRecord(e); return matchesUia(e,value,filter)?value:null; }); return record?[record]:[]; }
   const up=filter.up==null?null:relationSpec(filter.up,"a11y"); if (up?.domain==="window") for (const window of windowRecords(up.filter)) { collect(uiaElementFromHandle(asPointer(window.wid)),up.depth); if (found.length>=max) break; } else collect(uiaRootElement(),Infinity); return found;
+}
+function uiaRetain(element) { comCall(element,1,"u32"); return element; }
+function uiaFindFromRoot(root, filter, depth = Infinity) {
+  let found = null; uiaWalk(root,"down",depth,(element) => { const record = uiaRecord(element); if (!matchesUia(element,record,filter)) return false; found = uiaRetain(element); return true; }); return found;
+}
+function uiaResolve(filter = {}) {
+  filter = normalizeUiaFilter(filter);
+  if (own(filter,"wid") && filter.wid != null && !Array.isArray(filter.wid)) {
+    const element = uiaElementFromHandle(asPointer(filter.wid)); if (!element) return null;
+    const record = uiaRecord(element); if (matchesUia(element,record,filter)) return element; comRelease(element); return null;
+  }
+  const up = filter.up == null ? null : relationSpec(filter.up,"a11y");
+  if (up?.domain === "window") for (const window of windowRecords(up.filter)) { const found = comUse(uiaElementFromHandle(asPointer(window.wid)),root => uiaFindFromRoot(root,filter,up.depth)); if (found) return found; }
+  return comUse(uiaRootElement(),root => uiaFindFromRoot(root,filter,Infinity));
+}
+function uiaPattern(element, id) { return comPtr(element,16,[id],["i32"]); }
+const UIA_ACTION = { invoke:[10000,3], select:[10010,3], toggle:[10015,3], expand:[10005,3], collapse:[10005,4], set:[10002,3], scroll:[10017,3] };
+export function a11y_action({ a11y = {}, action, value } = {}) {
+  action = String(action ?? "").toLowerCase();
+  if (action === "set" && value == null) throw new Error("a11y_action set requires value");
+  return comUse(uiaResolve(a11y), element => {
+    if (action === "focus") checkHR(comCall(element,3,"i32"),"IUIAutomationElement.SetFocus");
+    else {
+      const spec = UIA_ACTION[action]; if (!spec) throw new Error(`Unknown accessibility action: ${action}`);
+      const pattern = uiaPattern(element,spec[0]); if (!pattern) return null;
+      try {
+        if (action === "set") { const text = oleaut32.symbols.SysAllocString(wide(String(value ?? ""),true)); if (!text) throw new Error("SysAllocString failed"); try { checkHR(comCall(pattern,spec[1],"i32",["pointer"],[text]),"UI Automation set"); } finally { oleaut32.symbols.SysFreeString(text); } }
+        else checkHR(comCall(pattern,spec[1],"i32"),`UI Automation ${action}`);
+      } finally { comRelease(pattern); }
+    }
+    return { action, ...uiaRecord(element) };
+  });
 }
 let roReady = false;
 function ensureRo() { if (roReady) return; const hr = combase.symbols.RoInitialize(1); if (hr < 0 && (hr >>> 0) !== 0x80010106) checkHR(hr, "RoInitialize"); roReady = true; }
@@ -947,7 +999,7 @@ function resolveActionResources(name, value, resources) {
   if (name !== "ocr" || !value || typeof value !== "object" || typeof value.image !== "string") return value;
   const image = imageResource(resources, value.image); if (!image) scenarioFail("image resource unavailable", { image: value.image }); return { ...value, image };
 }
-const ACTIONS = { wait, window_control, window_set, mouse_move, mouse_button, keyb, clipboard, ocr, window_find, window_get, a11y_find, display_find, system, window_hit, highlight };
+const ACTIONS = { wait, window_control, window_set, mouse_move, mouse_button, keyb, input_reset, clipboard, ocr, window_find, window_get, a11y_find, a11y_action, display_find, system, window_hit, highlight };
 const SCENARIO_PATH = /^\$\.(prev|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/, STATE_PATH = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
 function scenarioPath(path) {
   const match = typeof path === "string" && path.match(SCENARIO_PATH);

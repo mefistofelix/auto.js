@@ -850,417 +850,206 @@ async function saveImage(image, path, format = "png") {
   return { path, bytes: bytes.length };
 }
 
-function mouseInput(flags, data = 0) {
-  const input = new Uint8Array(40);
-  const v = new DataView(input.buffer);
-  v.setUint32(0, INPUT_MOUSE, true);
-  v.setUint32(8 + 8, data >>> 0, true);
-  v.setUint32(8 + 12, flags >>> 0, true);
-  if (user32.symbols.SendInput(1, input, 40) !== 1) throw new Error("SendInput(mouse) failed");
+function sendInput(type, fill, label) {
+  const input = new Uint8Array(40), view = new DataView(input.buffer);
+  view.setUint32(0, type, true); fill(view);
+  if (user32.symbols.SendInput(1, input, 40) !== 1) throw new Error(`SendInput(${label}) failed`);
 }
+function mouseInput(flags, data = 0) { sendInput(INPUT_MOUSE, (v) => { v.setUint32(16, data >>> 0, true); v.setUint32(20, flags >>> 0, true); }, "mouse"); }
 
-function geometryContext(windowInfo, display) {
-  let explicitDisplay = null;
-  if (display != null) {
-    try { explicitDisplay = resolveDisplay(display); } catch { /* best effort */ }
-  }
-
-  let displayRect = explicitDisplay;
-  if (!displayRect && windowInfo?.display != null) {
-    try { displayRect = resolveDisplay({ index: windowInfo.display }); } catch { /* best effort */ }
-  }
-  if (!displayRect) {
-    try { displayRect = resolveDisplay(); } catch { /* best effort */ }
-  }
-
+function tryDisplay(value) { try { return resolveDisplay(value); } catch { return null; } }
+function geometryContext(info, display) {
+  const explicitDisplay = display == null ? null : tryDisplay(display);
   return {
-    window: windowInfo?.rect ?? null,
-    client: windowInfo ? clientRect(asPointer(windowInfo.wid)) : null,
-    display: displayRect,
+    window: info?.rect ?? null,
+    client: info ? clientRect(asPointer(info.wid)) : null,
+    display: explicitDisplay ?? (info?.display != null ? tryDisplay(info.display) : null) ?? tryDisplay(),
     explicitDisplay,
   };
 }
+function geometryReference(context, suffix) { return ({ W: context.window, WC: context.client, D: context.display })[(suffix || (context.window ? "W" : "D")).toUpperCase()] ?? null; }
 
-function geometryReference(context, suffix) {
-  const kind = (suffix || (context.window ? "W" : "D")).toUpperCase();
-  if (kind === "W") return context.window;
-  if (kind === "WC") return context.client;
-  if (kind === "D") return context.display;
-  return null;
-}
-
+const GEOMETRY_VALUE = /^([+-]?)(\d+(?:\.\d*)?|\.\d+)(%?)(WC|W|D)?$/i;
 function geometryValue(value, axis, current, context, size = false) {
-  if (value == null) return Math.round(current);
-
-  if (typeof value === "number" && Number.isFinite(value)) {
-    if (size) return Math.round(value);
-    const origin = context.explicitDisplay?.[axis] ?? 0;
-    return Math.round(origin + value);
-  }
-
-  if (typeof value !== "string") return Math.round(current);
-
-  const percent = value.match(/^([+-]?)(\d+(?:\.\d*)?|\.\d+)%(WC|W|D)?$/i);
+  const round = (x) => Math.round(x);
+  if (value == null) return round(current);
+  if (typeof value === "number" && Number.isFinite(value)) return round(size ? value : (context.explicitDisplay?.[axis] ?? 0) + value);
+  const match = typeof value === "string" && value.match(GEOMETRY_VALUE);
+  if (!match) return round(current);
+  const [, sign, amount, percent, suffix] = match, n = Number(amount);
   if (percent) {
-    const [, sign, amount, suffix] = percent;
-    const reference = geometryReference(context, suffix);
-    if (!reference) return Math.round(current);
-    const dimension = axis === "x" ? reference.width : reference.height;
-    const delta = Number(amount) / 100 * dimension;
-    if (sign) return Math.round(current + (sign === "-" ? -delta : delta));
-    if (size) return Math.round(delta);
-    return Math.round(reference[axis] + delta);
+    const ref = geometryReference(context, suffix);
+    if (!ref) return round(current);
+    const delta = n / 100 * (axis === "x" ? ref.width : ref.height);
+    return round(sign ? current + (sign === "-" ? -delta : delta) : size ? delta : ref[axis] + delta);
   }
-
-  const absolute = value.match(/^(\d+(?:\.\d*)?|\.\d+)(WC|W|D)$/i);
-  if (absolute) {
-    const [, amount, suffix] = absolute;
-    const reference = geometryReference(context, suffix);
-    if (!reference) return Math.round(current);
-    if (size) return Math.round(Number(amount));
-    return Math.round(reference[axis] + Number(amount));
+  if (suffix && !sign) {
+    const ref = geometryReference(context, suffix);
+    return ref ? round(size ? n : ref[axis] + n) : round(current);
   }
-
-  if (/^[+-](?:\d+(?:\.\d*)?|\.\d+)$/.test(value)) {
-    return Math.round(current + Number(value));
-  }
-
-  return Math.round(current);
+  return sign && !suffix ? round(current + (sign === "-" ? -n : n)) : round(current);
 }
-
 function resolvePos(pos, relative, context, fallback = relative) {
-  return {
-    x: pos?.x == null ? Math.round(fallback.x) : geometryValue(pos.x, "x", relative.x, context),
-    y: pos?.y == null ? Math.round(fallback.y) : geometryValue(pos.y, "y", relative.y, context),
-  };
+  return Object.fromEntries(["x", "y"].map((axis) => [axis, pos?.[axis] == null ? Math.round(fallback[axis]) : geometryValue(pos[axis], axis, relative[axis], context)]));
 }
 
-const ANCHORS = {
-  "top-left": [0, 0],
-  top: [0.5, 0],
-  "top-right": [1, 0],
-  left: [0, 0.5],
-  center: [0.5, 0.5],
-  right: [1, 0.5],
-  "bottom-left": [0, 1],
-  bottom: [0.5, 1],
-  "bottom-right": [1, 1],
-};
-
+const ANCHORS = { "top-left": [0, 0], top: [.5, 0], "top-right": [1, 0], left: [0, .5], center: [.5, .5], right: [1, .5], "bottom-left": [0, 1], bottom: [.5, 1], "bottom-right": [1, 1] };
 function anchorSpec(at) {
-  const value = String(at ?? "top-left").toLowerCase();
-  const match = value.match(/^(top-left|top|top-right|left|center|right|bottom-left|bottom|bottom-right)(wc|w|d)?$/);
-  const name = match?.[1] ?? "top-left";
-  return { factors: ANCHORS[name], suffix: match?.[2]?.toUpperCase() ?? null };
+  const match = String(at ?? "top-left").toLowerCase().match(/^(top-left|top|top-right|left|center|right|bottom-left|bottom|bottom-right)(wc|w|d)?$/);
+  return { factors: ANCHORS[match?.[1] ?? "top-left"], suffix: match?.[2]?.toUpperCase() ?? null };
 }
-
-function anchorFactors(at) {
-  return anchorSpec(at).factors;
-}
-
-function rectAnchor(rect, at) {
-  const [fx, fy] = anchorFactors(at);
-  return {
-    x: rect.x + rect.width * fx,
-    y: rect.y + rect.height * fy,
-  };
-}
-
 function geometryAnchor(context, at, fallback) {
-  const spec = anchorSpec(at);
-  const reference = spec.suffix ? geometryReference(context, spec.suffix) : fallback;
-  return rectAnchor(reference ?? fallback, at);
+  const { factors: [fx, fy], suffix } = anchorSpec(at), rect = (suffix && geometryReference(context, suffix)) || fallback;
+  return { x: rect.x + rect.width * fx, y: rect.y + rect.height * fy };
 }
 
 function resolveRectAxis(rect, base, context, axis) {
-  const horizontal = axis === "x";
-  const startKey = horizontal ? "left" : "top";
-  const endKey = horizontal ? "right" : "bottom";
-  const sizeKey = horizontal ? "width" : "height";
-  const posKey = axis;
-  const start = base[axis];
-  const size = base[sizeKey];
-  const end = start + size;
-  const [fx, fy] = anchorFactors(rect.at);
-  const factor = horizontal ? fx : fy;
-
+  const horizontal = axis === "x", startKey = horizontal ? "left" : "top", endKey = horizontal ? "right" : "bottom", sizeKey = horizontal ? "width" : "height";
+  const start = base[axis], size = base[sizeKey], end = start + size, factor = anchorSpec(rect.at).factors[horizontal ? 0 : 1];
   if (rect[startKey] != null || rect[endKey] != null) {
-    const nextStart = rect[startKey] == null
-      ? start
-      : geometryValue(rect[startKey], axis, start, context);
-    let nextEnd;
-    if (rect[endKey] != null) {
-      nextEnd = geometryValue(rect[endKey], axis, end, context);
-    } else if (rect[sizeKey] != null) {
-      nextEnd = nextStart + geometryValue(rect[sizeKey], axis, size, context, true);
-    } else {
-      nextEnd = end;
-    }
-    return [nextStart, nextEnd];
+    const a = rect[startKey] == null ? start : geometryValue(rect[startKey], axis, start, context);
+    const b = rect[endKey] != null ? geometryValue(rect[endKey], axis, end, context) : rect[sizeKey] != null ? a + geometryValue(rect[sizeKey], axis, size, context, true) : end;
+    return [a, b];
   }
-
-  const nextSize = rect[sizeKey] == null
-    ? size
-    : geometryValue(rect[sizeKey], axis, size, context, true);
-  const currentAnchor = geometryAnchor(context, rect.at, base)[axis];
-  const nextAnchor = rect[posKey] == null
-    ? currentAnchor
-    : geometryValue(rect[posKey], axis, currentAnchor, context);
-  const nextStart = nextAnchor - nextSize * factor;
-  return [nextStart, nextStart + nextSize];
+  const nextSize = rect[sizeKey] == null ? size : geometryValue(rect[sizeKey], axis, size, context, true);
+  const anchor = geometryAnchor(context, rect.at, base)[axis];
+  const nextAnchor = rect[axis] == null ? anchor : geometryValue(rect[axis], axis, anchor, context);
+  const next = nextAnchor - nextSize * factor;
+  return [next, next + nextSize];
 }
-
-function resolveRect(rect, base, context) {
-  rect ??= {};
-  const [left, right] = resolveRectAxis(rect, base, context, "x");
-  const [top, bottom] = resolveRectAxis(rect, base, context, "y");
-  return {
-    x: Math.round(left),
-    y: Math.round(top),
-    width: Math.round(right - left),
-    height: Math.round(bottom - top),
-  };
+function resolveRect(rect = {}, base, context) {
+  const [left, right] = resolveRectAxis(rect, base, context, "x"), [top, bottom] = resolveRectAxis(rect, base, context, "y");
+  return { x: Math.round(left), y: Math.round(top), width: Math.round(right - left), height: Math.round(bottom - top) };
 }
-
 function positionRect(rect, pos, context) {
   if (!pos || (pos.x == null && pos.y == null)) return rect;
-  const anchor = geometryAnchor(context, pos.at, rect);
-  const to = resolvePos(pos, anchor, context, anchor);
-  return {
-    x: Math.round(rect.x + to.x - anchor.x),
-    y: Math.round(rect.y + to.y - anchor.y),
-    width: rect.width,
-    height: rect.height,
-  };
+  const from = geometryAnchor(context, pos.at, rect), to = resolvePos(pos, from, context, from);
+  return { ...rect, x: Math.round(rect.x + to.x - from.x), y: Math.round(rect.y + to.y - from.y) };
+}
+
+function cursorPoint() {
+  const cursor = new Int32Array(2);
+  return user32.symbols.GetCursorPos(cursor) ? { x: cursor[0], y: cursor[1] } : null;
+}
+function mouseTarget(info, display, pos, defaultAt) {
+  const from = cursorPoint();
+  if (!from) return null;
+  const target = defaultAt ? { at: defaultAt, ...(pos ?? {}) } : pos, geometry = geometryContext(info, display);
+  const rect = info?.rect ?? (display != null || target?.at != null ? geometry.display : null);
+  const relative = rect ? geometryAnchor(geometry, target?.at, rect) : from;
+  return { from, to: resolvePos(target, relative, geometry, target?.at == null ? from : relative) };
 }
 
 export async function mouse_move({ pos, display, duration = 0, steps, window } = {}) {
+  const info = window == null ? null : windowRecords(window)[0], target = mouseTarget(info, display, pos);
+  if (!target) return null;
+  if (window != null && !info) return { pos: target.from };
+  const { from, to } = target;
   duration = timeMs(duration);
-  const p = new Int32Array(2);
-  if (!user32.symbols.GetCursorPos(p)) return null;
-  const from = { x: p[0], y: p[1] };
-
-  const info = window == null ? null : windowRecords(window)[0];
-  if (window != null && !info) return { pos: from };
-  const geometry = geometryContext(info, display);
-
-  let relative = from;
-  const anchorRect = info?.rect ?? (display != null || pos?.at != null ? geometry.display : null);
-  if (anchorRect) relative = geometryAnchor(geometry, pos?.at, anchorRect);
-  const fallback = pos?.at == null ? from : relative;
-  const to = resolvePos(pos, relative, geometry, fallback);
-
-  if (duration <= 0) {
-    return { pos: user32.symbols.SetCursorPos(to.x, to.y) ? to : from };
-  }
-
+  if (duration <= 0) return { pos: user32.symbols.SetCursorPos(to.x, to.y) ? to : from };
   steps ??= Math.max(2, Math.round(duration / 16));
-  const delay = duration / steps;
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
-    const x = Math.round(from.x + (to.x - from.x) * t);
-    const y = Math.round(from.y + (to.y - from.y) * t);
-    user32.symbols.SetCursorPos(x, y);
-    if (i < steps) await wait({ ms: delay });
+    user32.symbols.SetCursorPos(Math.round(from.x + (to.x - from.x) * t), Math.round(from.y + (to.y - from.y) * t));
+    if (i < steps) await wait(duration / steps);
   }
   return { pos: to };
 }
 
 const mouseButtons = {
-  left: { input: [0x0002, 0x0004], message: [WM_LBUTTONDOWN, WM_LBUTTONUP], state: 0x0001 },
-  right: { input: [0x0008, 0x0010], message: [WM_RBUTTONDOWN, WM_RBUTTONUP], state: 0x0002 },
-  middle: { input: [0x0020, 0x0040], message: [WM_MBUTTONDOWN, WM_MBUTTONUP], state: 0x0010 },
+  left: { input: [2, 4], message: [WM_LBUTTONDOWN, WM_LBUTTONUP], state: 1 },
+  right: { input: [8, 16], message: [WM_RBUTTONDOWN, WM_RBUTTONUP], state: 2 },
+  middle: { input: [32, 64], message: [WM_MBUTTONDOWN, WM_MBUTTONUP], state: 16 },
 };
-
-function mousePoint(info, display, pos) {
-  const cursor = new Int32Array(2);
-  if (!user32.symbols.GetCursorPos(cursor)) return null;
-  const from = { x: cursor[0], y: cursor[1] };
-  const geometry = geometryContext(info, display);
-  const target = info ? { at: "centerWC", ...(pos ?? {}) } : pos;
-  let relative = from;
-  const anchorRect = info?.rect ?? (display != null || target?.at != null ? geometry.display : null);
-  if (anchorRect) relative = geometryAnchor(geometry, target?.at, anchorRect);
-  const fallback = target?.at == null ? from : relative;
-  return resolvePos(target, relative, geometry, fallback);
-}
-
-function packMousePoint(pos) {
-  const packed = ((pos.x & 0xffff) | ((pos.y & 0xffff) << 16)) >>> 0;
-  return BigInt(packed);
-}
-
-function postMouseButton(hwnd, button, down, screenPos) {
-  const spec = mouseButtons[button];
+function packMousePoint({ x, y }) { return BigInt(((x & 0xffff) | ((y & 0xffff) << 16)) >>> 0); }
+function postMouseButton(hwnd, spec, down, point) {
   const client = clientRect(hwnd);
   if (!client) throw new Error("GetClientRect failed");
-  const pos = { x: screenPos.x - client.x, y: screenPos.y - client.y };
-  const ok = user32.symbols.PostMessageW(
-    hwnd,
-    spec.message[down ? 0 : 1],
-    BigInt(down ? spec.state : 0),
-    packMousePoint(pos),
-  );
-  if (!ok) throw new Error("PostMessage(mouse button) failed");
+  const pos = { x: point.x - client.x, y: point.y - client.y };
+  if (!user32.symbols.PostMessageW(hwnd, spec.message[down ? 0 : 1], BigInt(down ? spec.state : 0), packMousePoint(pos))) throw new Error("PostMessage(mouse button) failed");
 }
-
-function postMouseWheel(hwnd, amount, screenPos) {
-  const delta = Math.round(amount * WHEEL_DELTA);
-  const wParam = BigInt(((delta & 0xffff) << 16) >>> 0);
-  if (!user32.symbols.PostMessageW(hwnd, WM_MOUSEWHEEL, wParam, packMousePoint(screenPos))) {
-    throw new Error("PostMessage(mouse wheel) failed");
-  }
+function postMouseWheel(hwnd, amount, point) {
+  const wParam = BigInt(((Math.round(amount * WHEEL_DELTA) & 0xffff) << 16) >>> 0);
+  if (!user32.symbols.PostMessageW(hwnd, WM_MOUSEWHEEL, wParam, packMousePoint(point))) throw new Error("PostMessage(mouse wheel) failed");
 }
 
 export function mouse_button({ click, down, up, wheel, window, display, pos, repeat = 1, interval = 0 } = {}) {
-  const actions = [["click", click], ["down", down], ["up", up], ["wheel", wheel]].filter(([, value]) => value != null);
+  const actions = Object.entries({ click, down, up, wheel }).filter(([, value]) => value != null);
   if (actions.length !== 1) throw new Error("mouse_button requires exactly one of click, down, up, wheel");
-
   const [action, value] = actions[0];
   if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`Invalid repeat: ${repeat}`);
   if (repeat !== 1 && action !== "click") throw new Error("mouse_button repeat is only valid with click");
-  interval = timeMs(interval);
   const info = window == null ? null : windowRecords(window)[0];
   if (window != null && !info) return null;
-  const point = mousePoint(info, display, pos);
-  if (!point) return null;
-  const direct = !!info;
-
-  if (!direct && pos != null && !user32.symbols.SetCursorPos(point.x, point.y)) return null;
-
+  const target = mouseTarget(info, display, pos, info ? "centerWC" : null), point = target?.to, direct = !!info;
+  if (!point || (!direct && pos != null && !user32.symbols.SetCursorPos(point.x, point.y))) return null;
   if (action === "wheel") {
     const amount = Number(value);
     if (!Number.isFinite(amount)) throw new Error(`Invalid wheel amount: ${value}`);
-    if (direct) postMouseWheel(asPointer(info.wid), amount, point);
-    else mouseInput(MOUSEEVENTF_WHEEL, Math.round(amount * WHEEL_DELTA));
-    return { wheel: amount, ...(direct ? { wid: info.wid } : {}), pos: point };
+    direct ? postMouseWheel(asPointer(info.wid), amount, point) : mouseInput(MOUSEEVENTF_WHEEL, Math.round(amount * WHEEL_DELTA));
+    return { wheel: amount, ...(direct && { wid: info.wid }), pos: point };
   }
-
-  const button = String(value).toLowerCase();
-  const spec = mouseButtons[button];
+  const button = String(value).toLowerCase(), spec = mouseButtons[button];
   if (!spec) throw new Error(`Unknown mouse button: ${value}`);
-
-  const send = (isDown) => {
-    if (direct) postMouseButton(asPointer(info.wid), button, isDown, point);
-    else mouseInput(spec.input[isDown ? 0 : 1]);
-  };
-
-  if (action === "click") {
-    for (let i = 0; i < repeat; i++) {
-      send(true);
-      send(false);
-      if (interval > 0 && i + 1 < repeat) sleepSync(interval);
-    }
-  } else {
-    send(action === "down");
-  }
-
-  return {
-    [action]: button,
-    ...(repeat !== 1 ? { repeat } : {}),
-    ...(direct ? { wid: info.wid } : {}),
-    pos: point,
-  }; 
+  const send = (down) => direct ? postMouseButton(asPointer(info.wid), spec, down, point) : mouseInput(spec.input[down ? 0 : 1]);
+  interval = timeMs(interval);
+  if (action === "click") for (let i = 0; i < repeat; i++) { send(true); send(false); if (interval && i + 1 < repeat) sleepSync(interval); }
+  else send(action === "down");
+  return { [action]: button, ...(repeat !== 1 && { repeat }), ...(direct && { wid: info.wid }), pos: point };
 }
 
-const VK = {
-  backspace: 0x08, back: 0x08, tab: 0x09, clear: 0x0c, enter: 0x0d, return: 0x0d,
-  shift: 0x10, ctrl: 0x11, control: 0x11, alt: 0x12, pause: 0x13, capslock: 0x14,
-  escape: 0x1b, esc: 0x1b, space: 0x20, pageup: 0x21, pgup: 0x21, pagedown: 0x22,
-  pgdn: 0x22, end: 0x23, home: 0x24, left: 0x25, up: 0x26, right: 0x27, down: 0x28,
-  select: 0x29, print: 0x2a, execute: 0x2b, printscreen: 0x2c, prtsc: 0x2c, snapshot: 0x2c,
-  insert: 0x2d, ins: 0x2d, delete: 0x2e, del: 0x2e, help: 0x2f,
-  lwin: 0x5b, rwin: 0x5c, win: 0x5b, apps: 0x5d, contextmenu: 0x5d, sleep: 0x5f,
-  multiply: 0x6a, add: 0x6b, separator: 0x6c, subtract: 0x6d, decimal: 0x6e, divide: 0x6f,
-  numlock: 0x90, scrolllock: 0x91,
-  lshift: 0xa0, rshift: 0xa1, lctrl: 0xa2, rctrl: 0xa3, lalt: 0xa4, ralt: 0xa5, altgr: 0xa5,
-  browserback: 0xa6, browserforward: 0xa7, browserrefresh: 0xa8, browserstop: 0xa9,
-  browsersearch: 0xaa, browserfavorites: 0xab, browserhome: 0xac,
-  volumemute: 0xad, volumedown: 0xae, volumeup: 0xaf,
-  medianext: 0xb0, mediaprev: 0xb1, mediastop: 0xb2, mediaplaypause: 0xb3,
-  launchmail: 0xb4, launchmedia: 0xb5, launchapp1: 0xb6, launchapp2: 0xb7,
-  oem1: 0xba, oemplus: 0xbb, oemcomma: 0xbc, oemminus: 0xbd, oemperiod: 0xbe,
-  oem2: 0xbf, oem3: 0xc0, oem4: 0xdb, oem5: 0xdc, oem6: 0xdd, oem7: 0xde,
-  oem8: 0xdf, oem102: 0xe2,
-};
-for (let i = 0; i <= 9; i++) {
-  VK[String(i)] = 0x30 + i;
-  VK[`numpad${i}`] = 0x60 + i;
-}
-for (let i = 0; i < 26; i++) VK[String.fromCharCode(97 + i)] = 0x41 + i;
-for (let i = 1; i <= 24; i++) VK[`f${i}`] = 0x6f + i;
+const VK = Object.fromEntries([
+  [8,"backspace back"],[9,"tab"],[12,"clear"],[13,"enter return"],[16,"shift"],[17,"ctrl control"],[18,"alt"],[19,"pause"],[20,"capslock"],
+  [27,"escape esc"],[32,"space"],[33,"pageup pgup"],[34,"pagedown pgdn"],[35,"end"],[36,"home"],[37,"left"],[38,"up"],[39,"right"],[40,"down"],
+  [41,"select"],[42,"print"],[43,"execute"],[44,"printscreen prtsc snapshot"],[45,"insert ins"],[46,"delete del"],[47,"help"],
+  [91,"lwin win"],[92,"rwin"],[93,"apps contextmenu"],[95,"sleep"],[106,"multiply"],[107,"add"],[108,"separator"],[109,"subtract"],[110,"decimal"],[111,"divide"],
+  [144,"numlock"],[145,"scrolllock"],[160,"lshift"],[161,"rshift"],[162,"lctrl"],[163,"rctrl"],[164,"lalt"],[165,"ralt altgr"],
+  [166,"browserback"],[167,"browserforward"],[168,"browserrefresh"],[169,"browserstop"],[170,"browsersearch"],[171,"browserfavorites"],[172,"browserhome"],
+  [173,"volumemute"],[174,"volumedown"],[175,"volumeup"],[176,"medianext"],[177,"mediaprev"],[178,"mediastop"],[179,"mediaplaypause"],
+  [180,"launchmail"],[181,"launchmedia"],[182,"launchapp1"],[183,"launchapp2"],[186,"oem1"],[187,"oemplus"],[188,"oemcomma"],[189,"oemminus"],[190,"oemperiod"],
+  [191,"oem2"],[192,"oem3"],[219,"oem4"],[220,"oem5"],[221,"oem6"],[222,"oem7"],[223,"oem8"],[226,"oem102"],
+].flatMap(([code, names]) => names.split(" ").map((name) => [name, code])));
 
-function keyboardInput(vk, scan, flags) {
-  const input = new Uint8Array(40);
-  const v = new DataView(input.buffer);
-  v.setUint32(0, INPUT_KEYBOARD, true);
-  v.setUint16(8, vk, true);
-  v.setUint16(10, scan, true);
-  v.setUint32(12, flags, true);
-  if (user32.symbols.SendInput(1, input, 40) !== 1) throw new Error("SendInput(keyboard) failed");
-}
+function keyboardInput(vk, scan, flags) { sendInput(INPUT_KEYBOARD, (v) => { v.setUint16(8, vk, true); v.setUint16(10, scan, true); v.setUint32(12, flags, true); }, "keyboard"); }
 
 function foregroundKeyboardLayout() {
-  const foreground = user32.symbols.GetForegroundWindow();
-  const pid = new Uint32Array(1);
-  const tid = foreground ? user32.symbols.GetWindowThreadProcessId(foreground, pid) : 0;
+  const window = user32.symbols.GetForegroundWindow(), tid = window ? user32.symbols.GetWindowThreadProcessId(window, new Uint32Array(1)) : 0;
   return user32.symbols.GetKeyboardLayout(tid);
 }
-
 function virtualKey(name) {
   if (typeof name === "number") return name;
-  return VK[String(name).toLowerCase()] ?? null;
+  const key = String(name).toLowerCase();
+  if (/^[a-z]$/.test(key)) return key.charCodeAt(0) - 32;
+  if (/^\d$/.test(key)) return key.charCodeAt(0);
+  const f = key.match(/^f(\d{1,2})$/), n = key.match(/^numpad(\d)$/);
+  if (f && +f[1] >= 1 && +f[1] <= 24) return 0x6f + +f[1];
+  if (n) return 0x60 + +n[1];
+  return VK[key] ?? null;
 }
-
 function keyFlags(vk, layout, up = false) {
-  const scan = user32.symbols.MapVirtualKeyExW(vk, 4, layout);
-  const extended = ((scan >>> 8) & 0xff) === 0xe0 || ((scan >>> 8) & 0xff) === 0xe1;
-  return (extended ? KEYEVENTF_EXTENDEDKEY : 0) | (up ? KEYEVENTF_KEYUP : 0);
+  const prefix = (user32.symbols.MapVirtualKeyExW(vk, 4, layout) >>> 8) & 0xff;
+  return ((prefix === 0xe0 || prefix === 0xe1) ? KEYEVENTF_EXTENDEDKEY : 0) | (up ? KEYEVENTF_KEYUP : 0);
 }
-
-function sendVirtualKey(vk, down, layout = foregroundKeyboardLayout()) {
-  keyboardInput(vk, 0, keyFlags(vk, layout, !down));
-}
-
-function characterKeys(text, layout) {
-  if (typeof text !== "string" || [...text].length !== 1 || text.length !== 1) return null;
-  const mapped = user32.symbols.VkKeyScanExW(text.charCodeAt(0), layout);
-  if (mapped === -1) return null;
-  const value = mapped & 0xffff;
-  const vk = value & 0xff;
-  const state = (value >>> 8) & 0xff;
-  const keys = [];
-  if ((state & 0x06) === 0x06) keys.push(0xa5); // AltGr / right Alt on layouts using Ctrl+Alt.
-  else {
-    if (state & 0x02) keys.push(0x11);
-    if (state & 0x04) keys.push(0x12);
-  }
-  if (state & 0x01) keys.push(0x10);
-  keys.push(vk);
-  return keys;
-}
+function sendVirtualKey(vk, down, layout = foregroundKeyboardLayout()) { keyboardInput(vk, 0, keyFlags(vk, layout, !down)); }
 
 function keySequence(name, layout) {
   const vk = virtualKey(name);
   if (vk != null) return [vk];
-  return characterKeys(name, layout);
+  if (typeof name !== "string" || name.length !== 1) return null;
+  const mapped = user32.symbols.VkKeyScanExW(name.charCodeAt(0), layout);
+  if (mapped === -1) return null;
+  const key = mapped & 0xff, state = (mapped >>> 8) & 0xff, keys = [];
+  if ((state & 6) === 6) keys.push(0xa5); else { if (state & 2) keys.push(0x11); if (state & 4) keys.push(0x12); }
+  if (state & 1) keys.push(0x10);
+  return [...keys, key];
 }
 
 function keyState(name, down) {
-  const layout = foregroundKeyboardLayout();
-  const keys = keySequence(name, layout);
+  const layout = foregroundKeyboardLayout(), keys = keySequence(name, layout);
   if (!keys || keys.length !== 1) return false;
-  try {
-    sendVirtualKey(keys[0], down, layout);
-    return true;
-  } catch {
-    return false;
-  }
+  try { sendVirtualKey(keys[0], down, layout); return true; } catch { return false; }
 }
-
-function keyNames(value) {
-  return Array.isArray(value) ? value : value == null ? [] : [value];
-}
+function keyNames(value) { return Array.isArray(value) ? value : value == null ? [] : [value]; }
 
 async function pressKeys(value) {
   const layout = foregroundKeyboardLayout();
@@ -1284,13 +1073,7 @@ async function pressKeys(value) {
 }
 
 function typeCodeUnit(code) {
-  try {
-    keyboardInput(0, code, KEYEVENTF_UNICODE);
-    keyboardInput(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
-    return true;
-  } catch {
-    return false;
-  }
+  try { keyboardInput(0, code, KEYEVENTF_UNICODE); keyboardInput(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP); return true; } catch { return false; }
 }
 
 async function typeText(text, interval) {

@@ -1704,7 +1704,7 @@ function keyNames(value) {
   return Array.isArray(value) ? value : value == null ? [] : [value];
 }
 
-async function pressKeys(value) {
+function pressKeys(value) {
   const layout = foregroundKeyboardLayout();
   const requested = keyNames(value);
   const sequence = [];
@@ -1765,9 +1765,7 @@ async function typeText(text, interval, duration, action) {
   let typed = 0;
   for (let i = 0; i < units.length; i++) {
     const unit = units[i],
-      ok = unit.enter
-        ? (await pressKeys("enter")).length
-        : typeCodeUnit(unit.code);
+      ok = unit.enter ? pressKeys("enter").length : typeCodeUnit(unit.code);
     if (ok) typed++;
     if (i + 1 < units.length) {
       const pause = human
@@ -1787,7 +1785,7 @@ export async function keyb(options = {}) {
     result = {};
   if (press != null) {
     for (let i = 0; i < count; i++) {
-      result.press = await pressKeys(press);
+      result.press = pressKeys(press);
       const pause = timeMs(interval, 0, options);
       if (pause > 0 && i + 1 < count) await delay(pause);
     }

@@ -2836,11 +2836,10 @@ function imageResult(id, image, saved = {}) {
 }
 
 function collectScenarioResources(resources, context) {
-  const state = resourceRefs(context.state, resources),
-    ret = resourceRefs(context.ret, resources);
-  for (const [id, resource] of resources) {
-    if (state.has(id)) resource.retained = true;
-    else if (resource.retained || !ret.has(id)) resources.delete(id);
+  const live = resourceRefs(context.state, resources);
+  resourceRefs(context.ret, resources, live);
+  for (const id of resources.keys()) {
+    if (!live.has(id)) resources.delete(id);
   }
 }
 
@@ -2852,7 +2851,7 @@ async function scenarioScreenshot(options, resources) {
     image = captureScreenshot(capture);
   if (!image) return null;
   const id = crypto.randomUUID();
-  resources.set(id, { value: image, retained: false });
+  resources.set(id, image);
   try {
     return imageResult(id, image, await saveImage(image, save, format));
   } catch (error) {
@@ -2861,17 +2860,15 @@ async function scenarioScreenshot(options, resources) {
   }
 }
 
-async function scenarioScreenshotSave(options, resources) {
+async function scenarioScreenshotSave(options, resources, state) {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     return null;
   }
-  const { image: id, save, format } = options, resource = resources.get(id);
-  if (!save || !resource?.retained) return null;
-  return imageResult(
-    id,
-    resource.value,
-    await saveImage(resource.value, save, format),
-  );
+  const { image: id, save, format } = options;
+  if (!save || !resourceRefs(state, resources).has(id)) return null;
+  const image = resources.get(id);
+  if (!image) return null;
+  return imageResult(id, image, await saveImage(image, save, format));
 }
 
 function scenarioFail(error, details = {}) {
@@ -2892,11 +2889,11 @@ function resolveActionResources(name, value, resources) {
     name !== "ocr" || !value || typeof value !== "object" ||
     typeof value.image !== "string"
   ) return value;
-  const resource = resources.get(value.image);
-  if (!resource) {
+  const image = resources.get(value.image);
+  if (!image) {
     scenarioFail("image resource unavailable", { image: value.image });
   }
-  return { ...value, image: resource.value };
+  return { ...value, image };
 }
 const ACTIONS = {
   window_find,
@@ -3081,9 +3078,9 @@ async function outputImage(image) {
 
 async function scenarioOutputState(value, resources, images = new Map()) {
   if (typeof value === "string") {
-    const resource = resources.get(value);
-    if (!resource) return value;
-    if (!images.has(value)) images.set(value, outputImage(resource.value));
+    const image = resources.get(value);
+    if (!image) return value;
+    if (!images.has(value)) images.set(value, outputImage(image));
     return images.get(value);
   }
   if (!value || typeof value !== "object") return value;
@@ -3143,7 +3140,11 @@ export async function run(actions = []) {
           if (name === "screenshot") {
             result = await scenarioScreenshot(input, resources);
           } else if (name === "screenshot_save") {
-            result = await scenarioScreenshotSave(input, resources);
+            result = await scenarioScreenshotSave(
+              input,
+              resources,
+              context.state,
+            );
           } else if (name === "input_reset") {
             result = releaseInput(held);
           } else {

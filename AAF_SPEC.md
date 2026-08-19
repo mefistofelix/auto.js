@@ -6,15 +6,15 @@ AAF is a small declarative format for desktop automation. A scenario is an order
 
 | Term | Meaning |
 | --- | --- |
-| **action** | One scenario step containing exactly one command. |
-| **target** | A selector/filter resolved by an action. |
+| `action` | One scenario step containing exactly one command. |
+| `target` | A selector/filter resolved by an action. |
 | `window` | Native-window target/filter. |
 | `a11y` | Accessibility-element target/filter. |
 | `wid` / `uid` | Opaque current identity for a window / accessibility element. |
 | `pos` / `rect` | Point / rectangle geometry. |
 | `$.prev` | Result of the most recent non-`state` action in the current run. |
 | `$.state` | Explicit temporary state owned by the current run. |
-| **image handle** | Opaque run-scoped reference to a captured image resource. |
+| `image handle` | Opaque run-scoped reference to a captured image resource. |
 
 
 # 1. Quick start: automate Notepad
@@ -61,7 +61,7 @@ This scenario finds a Notepad window, remembers it, focuses it, types text, capt
         wid: "$.state.target.wid"
 ```
 
-Step by step:
+**Step by step**
 
 1. `window_find` returns matching native windows. `$.prev[0]` is the first one.
 2. `state` stores that window record under `target` so later actions can reuse its `wid`.
@@ -72,7 +72,9 @@ Step by step:
 7. `screenshot_save` writes that retained image resource to disk without capturing again.
 8. `wait.ocr` polls until the expected text is visible or the timeout expires.
 
-Typical results are deliberately plain and reusable:
+<br>
+
+**Typical results** are deliberately plain and reusable:
 
 ```yaml
 - - wid: "0x730632"

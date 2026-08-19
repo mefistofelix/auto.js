@@ -2543,19 +2543,11 @@ async function asyncResult(operation) {
   try {
     for (;;) {
       const status = comOut(info, 7, Int32Array);
-      checkHR(status.hr, "IAsyncInfo.Status");
-      const s = status.out[0];
-      if (s === 1) break;
-      if (s === 2) throw new Error("WinRT operation canceled");
-      if (s === 3) {
-        const error = comOut(info, 8, Int32Array).out[0];
-        throw new Error(
-          `WinRT operation failed: HRESULT 0x${(error >>> 0).toString(16)}`,
-        );
-      }
+      if (status.hr < 0) return null;
+      if (status.out[0] === 1) return comPtr(operation, 8);
+      if (status.out[0] === 2 || status.out[0] === 3) return null;
       await wait(5);
     }
-    return comPtr(operation, 8, [], [], "IAsyncOperation.GetResults");
   } finally {
     comRelease(info);
   }
@@ -2601,28 +2593,15 @@ export async function ocr(options = {}) {
     );
   let engine, operation, result;
   try {
-    engine = comPtr(
-      statics,
-      10,
-      [],
-      [],
-      "OcrEngine.TryCreateFromUserProfileLanguages",
-    );
-    if (!engine) {
-      throw new Error("Windows OCR engine unavailable for user languages");
-    }
-    operation = comPtr(
-      engine,
-      6,
-      [bitmap],
-      ["pointer"],
-      "OcrEngine.RecognizeAsync",
-    );
+    engine = comPtr(statics, 10);
+    if (!engine) return null;
+    operation = comPtr(engine, 6, [bitmap]);
+    if (!operation) return null;
     result = await asyncResult(operation);
-    return {
-      text: hstringText(comPtr(result, 8, [], [], "OcrResult.Text")),
-      rect: image.rect,
-    };
+    if (!result) return null;
+    const text = comPtr(result, 8);
+    if (!text) return null;
+    return { text: hstringText(text), rect: image.rect };
   } finally {
     comRelease(result, operation, engine, statics, bitmap);
   }

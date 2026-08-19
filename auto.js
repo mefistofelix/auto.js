@@ -26,7 +26,6 @@ export const mouse_move = backend.mouse_move;
 export const mouse_button = backend.mouse_button;
 export const input_reset = backend.input_reset;
 export const clipboard = backend.clipboard;
-export const ocr = backend.ocr;
 export const wait = backend.wait;
 export const system = backend.system;
 
@@ -52,6 +51,38 @@ function swapRedBlue(data) {
 
 function sharpImage({ rect: { width, height }, data }) {
   return sharp(swapRedBlue(data), { raw: { width, height, channels: 4 } });
+}
+
+async function imageBGRA(image) {
+  if (!image) return null;
+  if (image.format === "bgra8") return image;
+  if (!(image.data instanceof Uint8Array)) return null;
+  try {
+    const { data, info } = await sharp(image.data).ensureAlpha().raw().toBuffer(
+      {
+        resolveWithObject: true,
+      },
+    );
+    return {
+      rect: {
+        x: image.rect?.x ?? 0,
+        y: image.rect?.y ?? 0,
+        width: info.width,
+        height: info.height,
+      },
+      format: "bgra8",
+      grayscale: !!image.grayscale,
+      data: swapRedBlue(data),
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function ocr(options = {}) {
+  if (!options.image) return backend.ocr(options);
+  const image = await imageBGRA(options.image);
+  return image ? backend.ocr({ ...options, image }) : null;
 }
 
 async function saveImage(image, path, format) {

@@ -123,6 +123,10 @@ const coreGraphics = Deno.dlopen(
       ],
       result: "pointer",
     },
+    CGBitmapContextCreateImage: {
+      parameters: ["pointer"],
+      result: "pointer",
+    },
     CGContextDrawImage: {
       parameters: ["pointer", RECT, "pointer"],
       result: "void",
@@ -190,6 +194,16 @@ const appKit = Deno.dlopen(
   { NSPasteboardTypeString: { type: "pointer" } },
 );
 
+const vision = Deno.dlopen(
+  "/System/Library/Frameworks/Vision.framework/Vision",
+  {
+    VNImageRectForNormalizedRect: {
+      parameters: [RECT, "usize", "usize"],
+      result: RECT,
+    },
+  },
+);
+
 const objc = Deno.dlopen("/usr/lib/libobjc.A.dylib", {
   objc_getClass: { parameters: ["buffer"], result: "pointer" },
   sel_registerName: { parameters: ["buffer"], result: "pointer" },
@@ -203,9 +217,34 @@ const objc = Deno.dlopen("/usr/lib/libobjc.A.dylib", {
     parameters: ["pointer", "pointer"],
     result: "i64",
   },
+  msg0u: {
+    name: "objc_msgSend",
+    parameters: ["pointer", "pointer"],
+    result: "usize",
+  },
+  msg0v: {
+    name: "objc_msgSend",
+    parameters: ["pointer", "pointer"],
+    result: "void",
+  },
   msg1p: {
     name: "objc_msgSend",
     parameters: ["pointer", "pointer", "pointer"],
+    result: "pointer",
+  },
+  msg1u: {
+    name: "objc_msgSend",
+    parameters: ["pointer", "pointer", "usize"],
+    result: "pointer",
+  },
+  msg2p: {
+    name: "objc_msgSend",
+    parameters: ["pointer", "pointer", "pointer", "pointer"],
+    result: "pointer",
+  },
+  msg2pu: {
+    name: "objc_msgSend",
+    parameters: ["pointer", "pointer", "buffer", "usize"],
     result: "pointer",
   },
   msg2b: {
@@ -1940,6 +1979,17 @@ function objcSelector(name) {
   return objc.symbols.sel_registerName(cString(name));
 }
 
+function objcNew(name) {
+  const type = objcClass(name);
+  if (!type) return null;
+  const object = objc.symbols.msg0(type, objcSelector("alloc"));
+  return object ? objc.symbols.msg0(object, objcSelector("init")) : null;
+}
+
+function objcRelease(object) {
+  if (object) objc.symbols.msg0v(object, objcSelector("release"));
+}
+
 function pasteboard() {
   const type = appKit.symbols.NSPasteboardTypeString;
   const boardClass = objcClass("NSPasteboard");
@@ -2039,7 +2089,7 @@ function grayscaleBGRA(data) {
   return out;
 }
 
-export function captureScreenshot(options = {}) {
+function captureCGImage(options = {}) {
   const capture = coreGraphics.symbols.CGWindowListCreateImage;
   if (!capture) return null;
   const rect = captureArea(options);
@@ -2050,7 +2100,42 @@ export function captureScreenshot(options = {}) {
     0,
     CG_IMAGE_NOMINAL,
   );
-  if (!image) return null;
+  return image ? { image, rect } : null;
+}
+
+function bgraCGImage(image) {
+  if (
+    image?.format !== "bgra8" || !(image.data instanceof Uint8Array) ||
+    !image.rect?.width || !image.rect?.height
+  ) return null;
+  const { width, height } = image.rect;
+  const colorSpace = coreGraphics.symbols.CGColorSpaceCreateDeviceRGB();
+  if (!colorSpace) throw new Error("CGColorSpaceCreateDeviceRGB failed");
+  try {
+    const context = coreGraphics.symbols.CGBitmapContextCreate(
+      image.data,
+      BigInt(width),
+      BigInt(height),
+      8n,
+      BigInt(width * 4),
+      colorSpace,
+      CG_BITMAP_BGRA,
+    );
+    if (!context) throw new Error("CGBitmapContextCreate failed");
+    try {
+      return coreGraphics.symbols.CGBitmapContextCreateImage(context);
+    } finally {
+      coreGraphics.symbols.CGContextRelease(context);
+    }
+  } finally {
+    coreGraphics.symbols.CGColorSpaceRelease(colorSpace);
+  }
+}
+
+export function captureScreenshot(options = {}) {
+  const captured = captureCGImage(options);
+  if (!captured) return null;
+  const { image, rect } = captured;
   try {
     const width = Number(coreGraphics.symbols.CGImageGetWidth(image));
     const height = Number(coreGraphics.symbols.CGImageGetHeight(image));
@@ -2092,8 +2177,110 @@ export function captureScreenshot(options = {}) {
   }
 }
 
-export function ocr() {
-  return null;
+function visionText(image) {
+  if (!vision.symbols.VNImageRectForNormalizedRect) return null;
+  const pool = objcNew("NSAutoreleasePool");
+  try {
+    const request = objcNew("VNRecognizeTextRequest");
+    const options = objcNew("NSDictionary");
+    const handlerType = objcClass("VNImageRequestHandler");
+    const handlerObject = handlerType
+      ? objc.symbols.msg0(handlerType, objcSelector("alloc"))
+      : null;
+    const handler = handlerObject
+      ? objc.symbols.msg2p(
+        handlerObject,
+        objcSelector("initWithCGImage:options:"),
+        image,
+        options,
+      )
+      : null;
+    const arrayType = objcClass("NSArray");
+    const arrayObject = arrayType
+      ? objc.symbols.msg0(arrayType, objcSelector("alloc"))
+      : null;
+    const requestPointer = request
+      ? new BigUint64Array([Deno.UnsafePointer.value(request)])
+      : null;
+    const requests = arrayObject && requestPointer
+      ? objc.symbols.msg2pu(
+        arrayObject,
+        objcSelector("initWithObjects:count:"),
+        requestPointer,
+        1n,
+      )
+      : null;
+    if (!request || !options || !handler || !requests) {
+      objcRelease(requests);
+      objcRelease(handler);
+      objcRelease(options);
+      objcRelease(request);
+      return null;
+    }
+
+    try {
+      const error = new BigUint64Array(1);
+      if (
+        !objc.symbols.msg2b(
+          handler,
+          objcSelector("performRequests:error:"),
+          requests,
+          Deno.UnsafePointer.of(error),
+        )
+      ) return null;
+
+      const results = objc.symbols.msg0(request, objcSelector("results"));
+      if (!results) return null;
+      const lines = [];
+      const count = Number(objc.symbols.msg0u(results, objcSelector("count")));
+      for (let i = 0; i < count; i++) {
+        const observation = objc.symbols.msg1u(
+          results,
+          objcSelector("objectAtIndex:"),
+          BigInt(i),
+        );
+        const candidates = observation && objc.symbols.msg1u(
+          observation,
+          objcSelector("topCandidates:"),
+          1n,
+        );
+        if (
+          !candidates || !objc.symbols.msg0u(candidates, objcSelector("count"))
+        ) {
+          continue;
+        }
+        const candidate = objc.symbols.msg1u(
+          candidates,
+          objcSelector("objectAtIndex:"),
+          0n,
+        );
+        const text = candidate &&
+          objc.symbols.msg0(candidate, objcSelector("string"));
+        if (text) lines.push(cfText(text));
+      }
+      return lines.join("\n");
+    } finally {
+      objcRelease(requests);
+      objcRelease(handler);
+      objcRelease(options);
+      objcRelease(request);
+    }
+  } finally {
+    if (pool) objc.symbols.msg0v(pool, objcSelector("drain"));
+  }
+}
+
+export function ocr(options = {}) {
+  const captured = options.image
+    ? { image: bgraCGImage(options.image), rect: options.image.rect }
+    : captureCGImage(options);
+  if (!captured?.image) return null;
+  try {
+    const text = visionText(captured.image);
+    return text == null ? null : { text, rect: captured.rect };
+  } finally {
+    coreGraphics.symbols.CGImageRelease(captured.image);
+  }
 }
 
 export async function wait(options = 0) {
@@ -2104,11 +2291,21 @@ export async function wait(options = 0) {
   const kinds = ["window", "ocr", "image", "change"].filter((key) =>
     options[key] != null
   );
-  if (kinds.length !== 1 || kinds[0] !== "window") return null;
+  if (kinds.length !== 1 || !["window", "ocr"].includes(kinds[0])) return null;
   const until = performance.now() + timeMs(options.timeout, 10000, options);
   for (;;) {
-    const value = window_get({ window: options.window });
-    if (options.not ? !value : value) return options.not ? true : value;
+    let value;
+    let matched;
+    if (kinds[0] === "window") {
+      value = window_get({ window: options.window });
+      matched = !!value;
+    } else {
+      const { text, ...source } = options.ocr ?? {};
+      if (text == null) return null;
+      value = await ocr(source);
+      matched = !!value && regexMatch(value.text, text);
+    }
+    if (options.not ? !matched : matched) return options.not ? true : value;
     const remaining = until - performance.now();
     if (remaining <= 0) return null;
     const interval = Math.max(1, timeMs(options.interval, 100, options));

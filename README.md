@@ -15,7 +15,7 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 - keyboard press/down/up/type, repeated presses, active-layout character mapping, and human/random timing
 - `input_sel` focused/targeted text selection by range or regex, plus read/write and clipboard read/write/clear
 - screenshots with WebP default and PNG support, retained scenario image resources, screenshot reuse, and caller-owned final-state images
-- Windows-native OCR through WinRT
+- native OCR through Windows WinRT or macOS Vision
 - polling waits for windows, OCR, images, and visual changes
 - explicit scenario `state`, references, interpolation, push/delete operations, and resource lifetime
 - session lock detection plus one-shot wake and scoped no-sleep/display-off requests
@@ -115,4 +115,4 @@ AutoJS intentionally favors a small distribution and direct operating-system API
 
 `auto.js` selects the native backend from `Deno.build.os`. The backend boundary stays direct and functional: unsupported operating-system capabilities return no result instead of being emulated with misleading semantics.
 
-The Darwin backend currently maps displays and Quartz windows, AX accessibility/actions and window move/size/focus/minimize/restore/close, physical mouse and keyboard input, text selection, clipboard, screenshots through the legacy Quartz capture API when present, and power wake/awake assertions. macOS has no fake native-child HWND tree or direct-window mouse posting here; `WC`, native class/owner fields, frame/topmost/opacity mutation, lock-state detection, and OCR currently return unavailable/null semantics rather than approximations.
+The Darwin backend currently maps displays and Quartz windows, AX accessibility/actions and window move/size/focus/minimize/restore/close, physical mouse and keyboard input, text selection, clipboard, screenshots through the legacy Quartz capture API when present, Vision OCR including `wait.ocr`, and power wake/awake assertions. macOS has no fake native-child HWND tree or direct-window mouse posting here; `WC`, native class/owner fields, frame/topmost/opacity mutation, and lock-state detection return unavailable/null semantics rather than approximations.

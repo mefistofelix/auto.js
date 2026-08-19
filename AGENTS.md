@@ -253,7 +253,9 @@ Full-window capture first uses `PrintWindow(PW_RENDERFULLCONTENT)` and falls bac
 
 ## OCR
 
-OCR must remain Windows-native and dependency-free:
+OCR stays platform-native and dependency-free beyond the already approved Sharp codec boundary.
+
+On Windows:
 
 1. raw BGRA8 pixels
 2. WinRT `Windows.Storage.Streams.Buffer`
@@ -263,7 +265,9 @@ OCR must remain Windows-native and dependency-free:
 
 COM and WinRT methods are invoked directly from their vtables with `Deno.UnsafeFnPointer`. Async WinRT operations are observed through `IAsyncInfo` and then `GetResults`.
 
-Do not replace this with Tesseract or a subprocess.
+On Darwin, use Vision directly through the Objective-C runtime: create a `VNRecognizeTextRequest`, process a `CGImage` synchronously with `VNImageRequestHandler`, and read each observation's first `topCandidates(1)` string. Keep Vision's default accurate recognition level. Fresh screenshots should stay as `CGImage` for OCR instead of round-tripping through an encoded format; caller-returned encoded image resources are decoded to the common BGRA8 representation at the shared codec boundary first.
+
+Do not replace native OCR with Tesseract or a subprocess.
 
 ## Input
 

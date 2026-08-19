@@ -6,44 +6,199 @@ if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") {
   throw new Error("auto.js currently supports Windows x64 only");
 }
 
-function dll(name, text) {
-  const symbols = {};
-  for (const spec of text.split(/[;\n]/).map((x) => x.trim()).filter(Boolean)) {
-    const [symbol, result, ...parameters] = spec.split(/\s+/);
-    symbols[symbol] = { parameters, result };
-  }
-  return Deno.dlopen(name, symbols);
-}
-const user32 = dll(
-  "user32.dll",
-  `EnumWindows i32 pointer pointer; EnumChildWindows i32 pointer pointer pointer; EnumDisplayMonitors i32 pointer pointer pointer pointer; GetMonitorInfoW i32 pointer buffer; GetWindowTextLengthW i32 pointer; GetWindowTextW i32 pointer buffer i32; GetClassNameW i32 pointer buffer i32; GetWindowThreadProcessId u32 pointer buffer; GetKeyboardLayout pointer u32; VkKeyScanExW i16 u16 pointer; MapVirtualKeyExW u32 u32 u32 pointer; GetWindowRect i32 pointer buffer; GetWindowLongW i32 pointer i32; SetWindowLongW i32 pointer i32 i32; GetWindow pointer pointer u32; GetClientRect i32 pointer buffer; ClientToScreen i32 pointer buffer; IsWindowVisible i32 pointer; IsWindowEnabled i32 pointer; IsIconic i32 pointer; IsZoomed i32 pointer; MonitorFromWindow pointer pointer u32; ShowWindow i32 pointer i32; SetWindowPos i32 pointer pointer i32 i32 i32 i32 u32; SetForegroundWindow i32 pointer; BringWindowToTop i32 pointer; SetFocus pointer pointer; GetForegroundWindow pointer; GetGUIThreadInfo i32 u32 buffer; AttachThreadInput i32 u32 u32 i32; PostMessageW i32 pointer u32 usize isize; SendMessageTimeoutW isize pointer u32 usize pointer u32 u32 buffer; EnableWindow i32 pointer i32; SetLayeredWindowAttributes i32 pointer u32 u8 u32; GetDC pointer pointer; ReleaseDC i32 pointer pointer; RegisterClassExW u16 buffer; CreateWindowExW pointer u32 buffer buffer u32 i32 i32 i32 i32 pointer pointer pointer pointer; DefWindowProcW isize pointer u32 usize isize; DestroyWindow i32 pointer; UpdateWindow i32 pointer; FillRect i32 pointer buffer pointer; PrintWindow i32 pointer pointer u32; SetCursorPos i32 i32 i32; GetCursorPos i32 buffer; SendInput u32 u32 buffer i32; WindowFromPoint pointer u64; GetAncestor pointer pointer u32; SetProcessDPIAware i32; OpenClipboard i32 pointer; CloseClipboard i32; EmptyClipboard i32; GetClipboardData pointer u32; SetClipboardData pointer u32 pointer; IsClipboardFormatAvailable i32 u32`,
-);
-const kernel32 = dll(
-  "kernel32.dll",
-  `OpenProcess pointer u32 i32 u32; QueryFullProcessImageNameW i32 pointer u32 buffer buffer; CloseHandle i32 pointer; GetCurrentThreadId u32; GlobalAlloc pointer u32 usize; GlobalLock pointer pointer; GlobalUnlock i32 pointer; GlobalFree pointer pointer; GetModuleHandleW pointer pointer; SetThreadExecutionState u32 u32`,
-);
-const gdi32 = dll(
-  "gdi32.dll",
-  `CreateCompatibleDC pointer pointer; DeleteDC i32 pointer; CreateDIBSection pointer pointer buffer u32 buffer pointer u32; SelectObject pointer pointer pointer; DeleteObject i32 pointer; CreateSolidBrush pointer u32; BitBlt i32 pointer i32 i32 i32 i32 pointer i32 i32 u32`,
-);
-const ntdll = dll("ntdll.dll", `RtlMoveMemory void pointer buffer usize`);
-const wtsapi32 = dll(
-  "wtsapi32.dll",
-  `WTSQuerySessionInformationW i32 pointer u32 u32 buffer buffer; WTSFreeMemory void pointer`,
-);
-const ole32 = dll(
-  "ole32.dll",
-  `CoInitializeEx i32 pointer u32; CoCreateInstance i32 buffer pointer u32 buffer buffer`,
-);
-const oleaut32 = dll(
-  "oleaut32.dll",
-  `SysAllocString pointer buffer; SysStringLen u32 pointer; SysFreeString void pointer; SafeArrayGetLBound i32 pointer u32 buffer; SafeArrayGetUBound i32 pointer u32 buffer; SafeArrayAccessData i32 pointer buffer; SafeArrayUnaccessData i32 pointer; SafeArrayDestroy i32 pointer; VariantClear i32 buffer`,
-);
-const combase = dll(
-  "combase.dll",
-  `RoInitialize i32 u32; RoGetActivationFactory i32 pointer buffer buffer; WindowsCreateString i32 buffer u32 buffer; WindowsDeleteString i32 pointer; WindowsGetStringRawBuffer pointer pointer buffer`,
-);
-const shcore = dll("shcore.dll", `GetScaleFactorForMonitor i32 pointer buffer`);
+const user32 = Deno.dlopen("user32.dll", {
+  EnumWindows: { parameters: ["pointer", "pointer"], result: "i32" },
+  EnumChildWindows: {
+    parameters: ["pointer", "pointer", "pointer"],
+    result: "i32",
+  },
+  EnumDisplayMonitors: {
+    parameters: ["pointer", "pointer", "pointer", "pointer"],
+    result: "i32",
+  },
+  GetMonitorInfoW: { parameters: ["pointer", "buffer"], result: "i32" },
+  GetWindowTextLengthW: { parameters: ["pointer"], result: "i32" },
+  GetWindowTextW: { parameters: ["pointer", "buffer", "i32"], result: "i32" },
+  GetClassNameW: { parameters: ["pointer", "buffer", "i32"], result: "i32" },
+  GetWindowThreadProcessId: {
+    parameters: ["pointer", "buffer"],
+    result: "u32",
+  },
+  GetKeyboardLayout: { parameters: ["u32"], result: "pointer" },
+  VkKeyScanExW: { parameters: ["u16", "pointer"], result: "i16" },
+  MapVirtualKeyExW: { parameters: ["u32", "u32", "pointer"], result: "u32" },
+  GetWindowRect: { parameters: ["pointer", "buffer"], result: "i32" },
+  GetWindowLongW: { parameters: ["pointer", "i32"], result: "i32" },
+  SetWindowLongW: { parameters: ["pointer", "i32", "i32"], result: "i32" },
+  GetWindow: { parameters: ["pointer", "u32"], result: "pointer" },
+  GetClientRect: { parameters: ["pointer", "buffer"], result: "i32" },
+  ClientToScreen: { parameters: ["pointer", "buffer"], result: "i32" },
+  IsWindowVisible: { parameters: ["pointer"], result: "i32" },
+  IsWindowEnabled: { parameters: ["pointer"], result: "i32" },
+  IsIconic: { parameters: ["pointer"], result: "i32" },
+  IsZoomed: { parameters: ["pointer"], result: "i32" },
+  MonitorFromWindow: { parameters: ["pointer", "u32"], result: "pointer" },
+  ShowWindow: { parameters: ["pointer", "i32"], result: "i32" },
+  SetWindowPos: {
+    parameters: ["pointer", "pointer", "i32", "i32", "i32", "i32", "u32"],
+    result: "i32",
+  },
+  SetForegroundWindow: { parameters: ["pointer"], result: "i32" },
+  BringWindowToTop: { parameters: ["pointer"], result: "i32" },
+  SetFocus: { parameters: ["pointer"], result: "pointer" },
+  GetForegroundWindow: { parameters: [], result: "pointer" },
+  GetGUIThreadInfo: { parameters: ["u32", "buffer"], result: "i32" },
+  AttachThreadInput: { parameters: ["u32", "u32", "i32"], result: "i32" },
+  PostMessageW: {
+    parameters: ["pointer", "u32", "usize", "isize"],
+    result: "i32",
+  },
+  SendMessageTimeoutW: {
+    parameters: ["pointer", "u32", "usize", "pointer", "u32", "u32", "buffer"],
+    result: "isize",
+  },
+  EnableWindow: { parameters: ["pointer", "i32"], result: "i32" },
+  SetLayeredWindowAttributes: {
+    parameters: ["pointer", "u32", "u8", "u32"],
+    result: "i32",
+  },
+  GetDC: { parameters: ["pointer"], result: "pointer" },
+  ReleaseDC: { parameters: ["pointer", "pointer"], result: "i32" },
+  RegisterClassExW: { parameters: ["buffer"], result: "u16" },
+  CreateWindowExW: {
+    parameters: [
+      "u32",
+      "buffer",
+      "buffer",
+      "u32",
+      "i32",
+      "i32",
+      "i32",
+      "i32",
+      "pointer",
+      "pointer",
+      "pointer",
+      "pointer",
+    ],
+    result: "pointer",
+  },
+  DefWindowProcW: {
+    parameters: ["pointer", "u32", "usize", "isize"],
+    result: "isize",
+  },
+  DestroyWindow: { parameters: ["pointer"], result: "i32" },
+  UpdateWindow: { parameters: ["pointer"], result: "i32" },
+  FillRect: { parameters: ["pointer", "buffer", "pointer"], result: "i32" },
+  PrintWindow: { parameters: ["pointer", "pointer", "u32"], result: "i32" },
+  SetCursorPos: { parameters: ["i32", "i32"], result: "i32" },
+  GetCursorPos: { parameters: ["buffer"], result: "i32" },
+  SendInput: { parameters: ["u32", "buffer", "i32"], result: "u32" },
+  WindowFromPoint: { parameters: ["u64"], result: "pointer" },
+  GetAncestor: { parameters: ["pointer", "u32"], result: "pointer" },
+  SetProcessDPIAware: { parameters: [], result: "i32" },
+  OpenClipboard: { parameters: ["pointer"], result: "i32" },
+  CloseClipboard: { parameters: [], result: "i32" },
+  EmptyClipboard: { parameters: [], result: "i32" },
+  GetClipboardData: { parameters: ["u32"], result: "pointer" },
+  SetClipboardData: { parameters: ["u32", "pointer"], result: "pointer" },
+  IsClipboardFormatAvailable: { parameters: ["u32"], result: "i32" },
+});
+const kernel32 = Deno.dlopen("kernel32.dll", {
+  OpenProcess: { parameters: ["u32", "i32", "u32"], result: "pointer" },
+  QueryFullProcessImageNameW: {
+    parameters: ["pointer", "u32", "buffer", "buffer"],
+    result: "i32",
+  },
+  CloseHandle: { parameters: ["pointer"], result: "i32" },
+  GetCurrentThreadId: { parameters: [], result: "u32" },
+  GlobalAlloc: { parameters: ["u32", "usize"], result: "pointer" },
+  GlobalLock: { parameters: ["pointer"], result: "pointer" },
+  GlobalUnlock: { parameters: ["pointer"], result: "i32" },
+  GlobalFree: { parameters: ["pointer"], result: "pointer" },
+  GetModuleHandleW: { parameters: ["pointer"], result: "pointer" },
+  SetThreadExecutionState: { parameters: ["u32"], result: "u32" },
+});
+const gdi32 = Deno.dlopen("gdi32.dll", {
+  CreateCompatibleDC: { parameters: ["pointer"], result: "pointer" },
+  DeleteDC: { parameters: ["pointer"], result: "i32" },
+  CreateDIBSection: {
+    parameters: ["pointer", "buffer", "u32", "buffer", "pointer", "u32"],
+    result: "pointer",
+  },
+  SelectObject: { parameters: ["pointer", "pointer"], result: "pointer" },
+  DeleteObject: { parameters: ["pointer"], result: "i32" },
+  CreateSolidBrush: { parameters: ["u32"], result: "pointer" },
+  BitBlt: {
+    parameters: [
+      "pointer",
+      "i32",
+      "i32",
+      "i32",
+      "i32",
+      "pointer",
+      "i32",
+      "i32",
+      "u32",
+    ],
+    result: "i32",
+  },
+});
+const ntdll = Deno.dlopen("ntdll.dll", {
+  RtlMoveMemory: { parameters: ["pointer", "buffer", "usize"], result: "void" },
+});
+const wtsapi32 = Deno.dlopen("wtsapi32.dll", {
+  WTSQuerySessionInformationW: {
+    parameters: ["pointer", "u32", "u32", "buffer", "buffer"],
+    result: "i32",
+  },
+  WTSFreeMemory: { parameters: ["pointer"], result: "void" },
+});
+const ole32 = Deno.dlopen("ole32.dll", {
+  CoInitializeEx: { parameters: ["pointer", "u32"], result: "i32" },
+  CoCreateInstance: {
+    parameters: ["buffer", "pointer", "u32", "buffer", "buffer"],
+    result: "i32",
+  },
+});
+const oleaut32 = Deno.dlopen("oleaut32.dll", {
+  SysAllocString: { parameters: ["buffer"], result: "pointer" },
+  SysStringLen: { parameters: ["pointer"], result: "u32" },
+  SysFreeString: { parameters: ["pointer"], result: "void" },
+  SafeArrayGetLBound: {
+    parameters: ["pointer", "u32", "buffer"],
+    result: "i32",
+  },
+  SafeArrayGetUBound: {
+    parameters: ["pointer", "u32", "buffer"],
+    result: "i32",
+  },
+  SafeArrayAccessData: { parameters: ["pointer", "buffer"], result: "i32" },
+  SafeArrayUnaccessData: { parameters: ["pointer"], result: "i32" },
+  SafeArrayDestroy: { parameters: ["pointer"], result: "i32" },
+  VariantClear: { parameters: ["buffer"], result: "i32" },
+});
+const combase = Deno.dlopen("combase.dll", {
+  RoInitialize: { parameters: ["u32"], result: "i32" },
+  RoGetActivationFactory: {
+    parameters: ["pointer", "buffer", "buffer"],
+    result: "i32",
+  },
+  WindowsCreateString: {
+    parameters: ["buffer", "u32", "buffer"],
+    result: "i32",
+  },
+  WindowsDeleteString: { parameters: ["pointer"], result: "i32" },
+  WindowsGetStringRawBuffer: {
+    parameters: ["pointer", "buffer"],
+    result: "pointer",
+  },
+});
+const shcore = Deno.dlopen("shcore.dll", {
+  GetScaleFactorForMonitor: {
+    parameters: ["pointer", "buffer"],
+    result: "i32",
+  },
+});
 try {
   user32.symbols.SetProcessDPIAware();
 } catch { /* already configured is fine */ }

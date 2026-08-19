@@ -222,32 +222,29 @@ function windowMessageText(hwnd) {
   const buffer = new Uint16Array(length + 1), written = sendMessage(hwnd,WM_GETTEXT,BigInt(buffer.length),Deno.UnsafePointer.of(buffer)); return written == null ? null : decodeWide(buffer,Math.min(Number(written),length));
 }
 function textControl(hwnd) { return /^(?:edit|richedit)/i.test(windowClass(hwnd)); }
-function selectionInfo(hwnd) {
-  const text = windowMessageText(hwnd);
-  if (text == null) return null;
-  const start = new Uint32Array(1), end = new Uint32Array(1), out = new BigUint64Array(1);
-  if (!user32.symbols.SendMessageTimeoutW(hwnd, EM_GETSEL, ptrValue(Deno.UnsafePointer.of(start)), Deno.UnsafePointer.of(end), 3, 250, out)) return null;
-  const a = Math.min(start[0], end[0]), b = Math.max(start[0], end[0]);
-  return { start: a, end: b, text: text.slice(a, b) };
-}
-function setSelection(hwnd, select) {
-  const text = windowMessageText(hwnd);
-  if (text == null) return null;
+function textRange(text, selection) {
   let start, end;
-  if (select === true) { start = 0; end = text.length; }
-  else if (typeof select === "string") {
+  if (selection === true) {
+    start = 0;
+    end = text.length;
+  } else if (typeof selection === "string") {
     let match;
-    try { match = new RegExp(select, "i").exec(text); } catch { throw new Error(`Invalid regex: ${select}`); }
+    try { match = new RegExp(selection, "i").exec(text); }
+    catch { throw new Error(`Invalid regex: ${selection}`); }
     if (!match) return null;
-    start = match.index; end = start + match[0].length;
-  } else if (select && typeof select === "object" && !Array.isArray(select)) {
-    start = Number(select.start); end = Number(select.end);
+    start = match.index;
+    end = start + match[0].length;
+  } else if (selection && typeof selection === "object" && !Array.isArray(selection)) {
+    start = Number(selection.start);
+    end = Number(selection.end);
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < 0) return null;
-    start = Math.min(start, text.length); end = Math.min(end, text.length);
-  } else return null;
-  if (sendMessage(hwnd, EM_SETSEL, BigInt(start), asPointer(end)) == null) return null;
-  const a = Math.min(start, end), b = Math.max(start, end);
-  return { start: a, end: b, text: text.slice(a, b) };
+    start = Math.min(start, text.length);
+    end = Math.min(end, text.length);
+  } else {
+    return null;
+  }
+  const from = Math.min(start, end), to = Math.max(start, end);
+  return { start: from, end: to, text: text.slice(from, to) };
 }
 function focusedControl() {
   const active = user32.symbols.GetForegroundWindow(); if (!active) return null;
@@ -261,10 +258,21 @@ export function input_sel(options = {}) {
   const found = options.window == null ? null : windowRecords(options.window)[0];
   const hwnd = options.window == null ? focusedControl() : found ? asPointer(found.wid) : null;
   if (!hwnd || !textControl(hwnd)) return null;
-  if (read) return options.read === true ? selectionInfo(hwnd)?.text ?? null : null;
-  if (select) return setSelection(hwnd, options.select);
-  const text = String(options.write ?? ""), data = wide(text, true);
-  return sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(data)) == null ? null : { length: text.length };
+  if (write) {
+    const text = String(options.write ?? ""), data = wide(text, true);
+    return sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(data)) == null ? null : { length: text.length };
+  }
+  const text = windowMessageText(hwnd);
+  if (text == null) return null;
+  if (select) {
+    const range = textRange(text, options.select);
+    if (!range || sendMessage(hwnd, EM_SETSEL, BigInt(range.start), asPointer(range.end)) == null) return null;
+    return range;
+  }
+  if (options.read !== true) return null;
+  const start = new Uint32Array(1), end = new Uint32Array(1), out = new BigUint64Array(1);
+  if (!user32.symbols.SendMessageTimeoutW(hwnd, EM_GETSEL, ptrValue(Deno.UnsafePointer.of(start)), Deno.UnsafePointer.of(end), 3, 250, out)) return null;
+  return textRange(text, { start: start[0], end: end[0] })?.text ?? null;
 }
 export function window_get({ window = {}, text = false } = {}) {
   const found = windowRecords(window)[0]; if (!found) return null; const out = publicWindow(found); if (text) out.text = windowMessageText(asPointer(found.wid)); return out;

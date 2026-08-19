@@ -2,6 +2,21 @@
 
 AAF is a small declarative format for desktop automation. A scenario is an ordered array of actions that can be represented as YAML, JSON, or any equivalent object/array structure.
 
+**Micro glossary**
+
+| Term | Meaning |
+| --- | --- |
+| **action** | One scenario step containing exactly one command. |
+| **target** | A selector/filter resolved by an action. |
+| `window` | Native-window target/filter. |
+| `a11y` | Accessibility-element target/filter. |
+| `wid` / `uid` | Opaque current identity for a window / accessibility element. |
+| `pos` / `rect` | Point / rectangle geometry. |
+| `$.prev` | Result of the most recent non-`state` action in the current run. |
+| `$.state` | Explicit temporary state owned by the current run. |
+| **image handle** | Opaque run-scoped reference to a captured image resource. |
+
+
 # 1. Quick start: automate Notepad
 
 This scenario finds a Notepad window, remembers it, focuses it, types text, captures its client area, keeps the image in scenario state, saves it to disk, and waits until OCR can see the typed text.
@@ -105,6 +120,7 @@ Typical results are deliberately plain and reusable:
 
 ---
 
+
 # 2. Action reference
 
 Every scenario action is an object with exactly one command key. The reference is ordered by domain rather than by implementation history.
@@ -154,6 +170,8 @@ Every scenario action is an object with exactly one command key. The reference i
 
 ---
 
+<br>
+
 ## `display_find`
 
 *Enumerate displays or select one by display index.*
@@ -183,6 +201,8 @@ An array of display records. A valid selector with no match returns `[]`.
 
 ---
 
+<br>
+
 ## `window_find`
 
 *Find native windows matching a reusable window filter.*
@@ -206,6 +226,8 @@ An array of window records. A valid search with no matches returns `[]`.
 
 ---
 
+<br>
+
 ## `window_get`
 
 *Get the first native window matching a filter, with optional live native text retrieval.*
@@ -226,6 +248,8 @@ An array of window records. A valid search with no matches returns `[]`.
 One window record or `null`. With `text: true`, the record also contains `text`, which is a string when the native control supports safe text retrieval or `null` otherwise. On Windows this uses bounded `WM_GETTEXT`, so standard cross-process Edit, Static, Button, and similar control contents can be read even when `GetWindowText` is insufficient.
 
 ---
+
+<br>
 
 ## `window_control`
 
@@ -252,6 +276,8 @@ One window record or `null`. With `text: true`, the record also contains `text`,
 The current window record after the operation, or `null` when no target can be resolved.
 
 ---
+
+<br>
 
 ## `window_set`
 
@@ -286,6 +312,8 @@ The current window record after applying the requested properties, or `null` whe
 
 ---
 
+<br>
+
 ## `window_hit`
 
 *Resolve the native window at a screen position.*
@@ -307,6 +335,8 @@ The current window record after applying the requested properties, or `null` whe
 A window record, or `null` when no native window exists at the resolved point.
 
 ---
+
+<br>
 
 ## `a11y_find`
 
@@ -335,6 +365,8 @@ An array of accessibility records. A valid search with no matches returns `[]`.
 
 ---
 
+<br>
+
 ## `highlight`
 
 *Draw a temporary visual outline without mutating the selected target.*
@@ -361,6 +393,8 @@ Exactly one of `window` or `a11y` must be supplied.
 
 ---
 
+<br>
+
 ## `mouse_move`
 
 *Move the physical pointer to a resolved position.*
@@ -385,6 +419,8 @@ Exactly one of `window` or `a11y` must be supplied.
 `{pos}` containing the final resolved screen position, or `null` when the position cannot be resolved.
 
 ---
+
+<br>
 
 ## `mouse_button`
 
@@ -419,6 +455,8 @@ Exactly one of `click`, `down`, `up`, or `wheel` is allowed.
 An object describing the applied operation and resolved `pos`; direct-target mode also includes `wid`.
 
 ---
+
+<br>
 
 ## `keyb`
 
@@ -458,6 +496,8 @@ An object reporting each operation that was applied. Repeated `press` also repor
 
 ---
 
+<br>
+
 ## `clipboard`
 
 *Read, replace, or clear clipboard text.*
@@ -483,6 +523,8 @@ Exactly one operation is allowed.
 - `clear` → `true`.
 
 ---
+
+<br>
 
 ## `screenshot`
 
@@ -522,6 +564,8 @@ bytes: 42871           # only when save was used
 
 ---
 
+<br>
+
 ## `screenshot_save`
 
 *Save a retained image resource without recapturing the screen.*
@@ -543,6 +587,8 @@ bytes: 42871           # only when save was used
 `{image, path, bytes, rect, grayscale}` when the retained resource is available. Inside `run()`, an unavailable/stale resource is reported through the scenario diagnostic result described under [`run()`](#run).
 
 ---
+
+<br>
 
 ## `ocr`
 
@@ -573,6 +619,8 @@ bytes: 42871           # only when save was used
 `{text, rect}` with recognized text and the image rectangle, or `null` when OCR/capture cannot produce a result outside the scenario diagnostic layer.
 
 ---
+
+<br>
 
 ## `wait`
 
@@ -625,6 +673,8 @@ Positive conditions return their concrete result directly: matched window, `{tex
 
 ---
 
+<br>
+
 ## `system`
 
 *Inspect the current session lock state or influence idle/sleep behavior.*
@@ -649,6 +699,7 @@ Positive conditions return their concrete result directly: matched window, `{tex
 `{locked}` for a query, plus `wake: true` or `awake: boolean` for a successful operation. `locked` is `true`, `false`, or `null` when the backend cannot determine the session state. On Windows, wake/awake use the native execution-state API and never unlock an authenticated lock screen.
 
 ---
+
 
 # 3. Targets and filters
 
@@ -846,6 +897,7 @@ The outer command decides the result domain. `window_find` always returns window
 
 ---
 
+
 # 4. Geometry and time
 
 ## Displays
@@ -923,6 +975,7 @@ One grammar is used everywhere:
 Numbers are milliseconds. String time values require `ms`, `s`, or `m`.
 
 ---
+
 
 # 5. Scenario execution, state, and resources
 
@@ -1017,6 +1070,8 @@ $.state.x          full typed replacement
 <<$.state.x|re>>   regex-escaped interpolation
 ```
 
+<br>
+
 ## `state`
 
 *Apply one atomic hierarchical patch to the current scenario state.*
@@ -1080,6 +1135,7 @@ All remaining resources are released when the run ends. Resource handles are nev
 
 ---
 
+
 # 6. Portability and backend capabilities
 
 AAF is a platform-agnostic model. A backend implements the capabilities that its operating system and security model actually expose.
@@ -1126,6 +1182,7 @@ On Wayland, the main difference is capability and permission rather than grammar
 Windows, macOS, and Linux therefore do not need identical native fields. AAF keeps one model while each backend exposes its supported subset or superset without changing scenario structure.
 
 ---
+
 
 # 7. Design principles
 

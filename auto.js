@@ -670,176 +670,82 @@ export async function highlight({ window, a11y, duration = 800 } = {}) {
 function captureArea(options = {}) {
   const info = options.window == null ? null : windowRecords(options.window)[0];
   if (options.window != null && !info) return null;
-
   if (options.rect) {
-    const geometry = geometryContext(info, options.display);
-    const base = info?.rect ?? geometry.display;
-    if (!base) return null;
-    const rect = resolveRect(options.rect, base, geometry);
-    if (rect.width <= 0 || rect.height <= 0) return null;
-    return { kind: "screen", ...rect };
+    const geometry = geometryContext(info, options.display), base = info?.rect ?? geometry.display;
+    const rect = base && resolveRect(options.rect, base, geometry);
+    return rect && rect.width > 0 && rect.height > 0 ? { kind: "screen", ...rect } : null;
   }
-
-  if (info) {
-    return {
-      kind: "window",
-      hwnd: asPointer(info.wid),
-      x: info.rect.x,
-      y: info.rect.y,
-      width: info.rect.width,
-      height: info.rect.height,
-    };
-  }
-
+  if (info) return { kind: "window", hwnd: asPointer(info.wid), ...info.rect };
   if (options.all || options.desktop === "all") {
-    const ds = displayRecords();
-    const left = Math.min(...ds.map((d) => d.x));
-    const top = Math.min(...ds.map((d) => d.y));
-    const right = Math.max(...ds.map((d) => d.x + d.width));
-    const bottom = Math.max(...ds.map((d) => d.y + d.height));
-    return { kind: "screen", x: left, y: top, width: right - left, height: bottom - top };
+    const displays = displayRecords();
+    if (!displays.length) return null;
+    const x = Math.min(...displays.map((d) => d.x)), y = Math.min(...displays.map((d) => d.y));
+    const right = Math.max(...displays.map((d) => d.x + d.width)), bottom = Math.max(...displays.map((d) => d.y + d.height));
+    return { kind: "screen", x, y, width: right - x, height: bottom - y };
   }
-
-  try {
-    const d = resolveDisplay(options.display);
-    return { kind: "screen", x: d.x, y: d.y, width: d.width, height: d.height, display: d };
-  } catch {
-    return null;
-  }
+  const display = tryDisplay(options.display);
+  return display ? { kind: "screen", x: display.x, y: display.y, width: display.width, height: display.height, display } : null;
 }
 
 function grayscaleBGRA(data) {
   const out = data.slice();
-  for (let i = 0; i < out.length; i += 4) {
-    const y = (29 * out[i] + 150 * out[i + 1] + 77 * out[i + 2]) >> 8;
-    out[i] = out[i + 1] = out[i + 2] = y;
-  }
+  for (let i = 0; i < out.length; i += 4) out[i] = out[i + 1] = out[i + 2] = (29 * out[i] + 150 * out[i + 1] + 77 * out[i + 2]) >> 8;
   return out;
 }
 
 function captureScreenshot(options = {}) {
   const area = captureArea(options);
-  if (!area) return null;
-  const { width, height } = area;
-  if (width <= 0 || height <= 0) return null;
+  if (!area || area.width <= 0 || area.height <= 0) return null;
+  const { width, height } = area, screen = user32.symbols.GetDC(null);
+  if (!screen) throw new Error("GetDC failed");
+  const memory = gdi32.symbols.CreateCompatibleDC(screen);
+  if (!memory) { user32.symbols.ReleaseDC(null, screen); throw new Error("CreateCompatibleDC failed"); }
 
-  const screenDC = user32.symbols.GetDC(null);
-  if (!screenDC) throw new Error("GetDC failed");
-  const memoryDC = gdi32.symbols.CreateCompatibleDC(screenDC);
-  if (!memoryDC) {
-    user32.symbols.ReleaseDC(null, screenDC);
-    throw new Error("CreateCompatibleDC failed");
-  }
-
-  const bmi = new Uint8Array(40);
-  const v = new DataView(bmi.buffer);
-  v.setUint32(0, 40, true);
-  v.setInt32(4, width, true);
-  v.setInt32(8, -height, true); // top-down BGRA
-  v.setUint16(12, 1, true);
-  v.setUint16(14, 32, true);
-  v.setUint32(16, 0, true);
-
-  const bitsOut = new BigUint64Array(1);
-  const bitmap = gdi32.symbols.CreateDIBSection(screenDC, bmi, 0, bitsOut, null, 0);
-  if (!bitmap || !bitsOut[0]) {
-    gdi32.symbols.DeleteDC(memoryDC);
-    user32.symbols.ReleaseDC(null, screenDC);
-    throw new Error("CreateDIBSection failed");
-  }
-
-  const old = gdi32.symbols.SelectObject(memoryDC, bitmap);
+  const bmi = new Uint8Array(40), view = new DataView(bmi.buffer), bits = new BigUint64Array(1);
+  view.setUint32(0, 40, true); view.setInt32(4, width, true); view.setInt32(8, -height, true); view.setUint16(12, 1, true); view.setUint16(14, 32, true);
+  const bitmap = gdi32.symbols.CreateDIBSection(screen, bmi, 0, bits, null, 0);
+  if (!bitmap || !bits[0]) { gdi32.symbols.DeleteDC(memory); user32.symbols.ReleaseDC(null, screen); throw new Error("CreateDIBSection failed"); }
+  const old = gdi32.symbols.SelectObject(memory, bitmap);
   try {
-    let ok;
-    if (area.kind === "window") {
-      ok = user32.symbols.PrintWindow(area.hwnd, memoryDC, PW_RENDERFULLCONTENT);
-      if (!ok) ok = gdi32.symbols.BitBlt(memoryDC, 0, 0, width, height, screenDC, area.x, area.y, SRCCOPY);
-    } else {
-      ok = gdi32.symbols.BitBlt(memoryDC, 0, 0, width, height, screenDC, area.x, area.y, SRCCOPY);
-    }
+    let ok = area.kind === "window" && user32.symbols.PrintWindow(area.hwnd, memory, PW_RENDERFULLCONTENT);
+    if (!ok) ok = gdi32.symbols.BitBlt(memory, 0, 0, width, height, screen, area.x, area.y, SRCCOPY);
     if (!ok) throw new Error("Screenshot capture failed");
-
-    const bits = Deno.UnsafePointer.create(bitsOut[0]);
-    let data = new Uint8Array(new Deno.UnsafePointerView(bits).getArrayBuffer(width * height * 4)).slice();
+    let data = new Uint8Array(new Deno.UnsafePointerView(asPointer(bits[0])).getArrayBuffer(width * height * 4)).slice();
     if (options.grayscale) data = grayscaleBGRA(data);
-    return {
-      rect: { x: area.x, y: area.y, width, height },
-      format: "bgra8",
-      grayscale: !!options.grayscale,
-      data,
-    };
+    return { rect: { x: area.x, y: area.y, width, height }, format: "bgra8", grayscale: !!options.grayscale, data };
   } finally {
-    if (old) gdi32.symbols.SelectObject(memoryDC, old);
-    gdi32.symbols.DeleteObject(bitmap);
-    gdi32.symbols.DeleteDC(memoryDC);
-    user32.symbols.ReleaseDC(null, screenDC);
+    if (old) gdi32.symbols.SelectObject(memory, old);
+    gdi32.symbols.DeleteObject(bitmap); gdi32.symbols.DeleteDC(memory); user32.symbols.ReleaseDC(null, screen);
   }
 }
 
 let crcTable;
 function crc32(data) {
-  if (!crcTable) {
-    crcTable = new Uint32Array(256);
-    for (let n = 0; n < 256; n++) {
-      let c = n;
-      for (let k = 0; k < 8; k++) c = (c & 1) ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-      crcTable[n] = c >>> 0;
-    }
-  }
-  let c = 0xffffffff;
-  for (const byte of data) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
+  crcTable ??= Uint32Array.from({ length: 256 }, (_, n) => { let c = n; for (let i = 0; i < 8; i++) c = (c & 1) ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
+  let c = 0xffffffff; for (const byte of data) c = crcTable[(c ^ byte) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0;
 }
-
 function concat(...parts) {
-  const size = parts.reduce((n, x) => n + x.length, 0);
-  const out = new Uint8Array(size);
-  let offset = 0;
-  for (const part of parts) { out.set(part, offset); offset += part.length; }
-  return out;
+  const out = new Uint8Array(parts.reduce((n, x) => n + x.length, 0));
+  let offset = 0; for (const part of parts) { out.set(part, offset); offset += part.length; } return out;
 }
-
 function pngChunk(type, data) {
-  const name = new TextEncoder().encode(type);
-  const head = new Uint8Array(4);
-  new DataView(head.buffer).setUint32(0, data.length, false);
-  const crc = new Uint8Array(4);
-  new DataView(crc.buffer).setUint32(0, crc32(concat(name, data)), false);
-  return concat(head, name, data, crc);
+  const name = new TextEncoder().encode(type), head = new Uint8Array(4), tail = new Uint8Array(4);
+  new DataView(head.buffer).setUint32(0, data.length, false); new DataView(tail.buffer).setUint32(0, crc32(concat(name, data)), false);
+  return concat(head, name, data, tail);
 }
-
-async function png(image) {
-  const { width, height } = image.rect;
-  const { data, grayscale } = image;
-  const channels = grayscale ? 1 : 4;
-  const stride = width * channels + 1;
-  const raw = new Uint8Array(stride * height);
+async function png({ rect: { width, height }, data, grayscale }) {
+  const channels = grayscale ? 1 : 4, stride = width * channels + 1, raw = new Uint8Array(stride * height);
   for (let y = 0; y < height; y++) {
-    let dst = y * stride;
-    raw[dst++] = 0;
-    let src = y * width * 4;
+    let dst = y * stride + 1, src = y * width * 4;
     for (let x = 0; x < width; x++, src += 4) {
-      if (grayscale) {
-        raw[dst++] = data[src];
-      } else {
-        raw[dst++] = data[src + 2];
-        raw[dst++] = data[src + 1];
-        raw[dst++] = data[src];
-        raw[dst++] = data[src + 3];
-      }
+      if (grayscale) raw[dst++] = data[src];
+      else { raw[dst++] = data[src + 2]; raw[dst++] = data[src + 1]; raw[dst++] = data[src]; raw[dst++] = data[src + 3]; }
     }
   }
-
-  const stream = new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate"));
-  const compressed = new Uint8Array(await new Response(stream).arrayBuffer());
-  const ihdr = new Uint8Array(13);
-  const v = new DataView(ihdr.buffer);
-  v.setUint32(0, width, false);
-  v.setUint32(4, height, false);
-  ihdr[8] = 8;
-  ihdr[9] = grayscale ? 0 : 6;
-  const signature = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
-  return concat(signature, pngChunk("IHDR", ihdr), pngChunk("IDAT", compressed), pngChunk("IEND", new Uint8Array()));
+  const compressed = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate"))).arrayBuffer());
+  const ihdr = new Uint8Array(13), view = new DataView(ihdr.buffer);
+  view.setUint32(0, width, false); view.setUint32(4, height, false); ihdr[8] = 8; ihdr[9] = grayscale ? 0 : 6;
+  return concat(Uint8Array.of(137,80,78,71,13,10,26,10), pngChunk("IHDR", ihdr), pngChunk("IDAT", compressed), pngChunk("IEND", new Uint8Array()));
 }
 
 async function saveImage(image, path, format = "png") {
@@ -1496,275 +1402,130 @@ export async function ocr(options = {}) {
 }
 
 function paeth(a, b, c) {
-  const p = a + b - c;
-  const pa = Math.abs(p - a);
-  const pb = Math.abs(p - b);
-  const pc = Math.abs(p - c);
-  return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+  const p = a + b - c, da = Math.abs(p - a), db = Math.abs(p - b), dc = Math.abs(p - c);
+  return da <= db && da <= dc ? a : db <= dc ? b : c;
 }
 
 async function readPng(path) {
-  const bytes = await Deno.readFile(path);
-  const signature = [137, 80, 78, 71, 13, 10, 26, 10];
+  const bytes = await Deno.readFile(path), signature = [137,80,78,71,13,10,26,10];
   if (bytes.length < 8 || signature.some((byte, i) => bytes[i] !== byte)) return null;
-
-  let width = 0;
-  let height = 0;
-  let bitDepth = 0;
-  let colorType = -1;
-  let interlace = 0;
+  let width = 0, height = 0, depth = 0, color = -1, interlace = 0, offset = 8;
   const idat = [];
-  let offset = 8;
-
   while (offset + 12 <= bytes.length) {
-    const v = new DataView(bytes.buffer, bytes.byteOffset + offset, 8);
-    const length = v.getUint32(0, false);
-    if (offset + 12 + length > bytes.length) return null;
-    const type = String.fromCharCode(bytes[offset + 4], bytes[offset + 5], bytes[offset + 6], bytes[offset + 7]);
-    const data = bytes.subarray(offset + 8, offset + 8 + length);
+    const length = new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0, false);
+    if (offset + length + 12 > bytes.length) return null;
+    const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8)), data = bytes.subarray(offset + 8, offset + 8 + length);
     if (type === "IHDR") {
       if (length !== 13) return null;
-      const h = new DataView(data.buffer, data.byteOffset, data.byteLength);
-      width = h.getUint32(0, false);
-      height = h.getUint32(4, false);
-      bitDepth = data[8];
-      colorType = data[9];
-      interlace = data[12];
-    } else if (type === "IDAT") {
-      idat.push(data.slice());
-    } else if (type === "IEND") {
-      break;
-    }
-    offset += 12 + length;
+      const view = new DataView(data.buffer, data.byteOffset, 13);
+      width = view.getUint32(0, false); height = view.getUint32(4, false); depth = data[8]; color = data[9]; interlace = data[12];
+    } else if (type === "IDAT") idat.push(data.slice());
+    else if (type === "IEND") break;
+    offset += length + 12;
   }
-
-  const channels = ({ 0: 1, 2: 3, 4: 2, 6: 4 })[colorType];
-  if (!width || !height || bitDepth !== 8 || !channels || interlace !== 0 || !idat.length) return null;
-
-  const compressed = concat(...idat);
-  const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("deflate"));
-  const raw = new Uint8Array(await new Response(stream).arrayBuffer());
-  const rowBytes = width * channels;
+  const channels = ({ 0: 1, 2: 3, 4: 2, 6: 4 })[color];
+  if (!width || !height || depth !== 8 || !channels || interlace || !idat.length) return null;
+  const raw = new Uint8Array(await new Response(new Blob([concat(...idat)]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
+  const rowBytes = width * channels, pixels = new Uint8Array(rowBytes * height);
   if (raw.length < (rowBytes + 1) * height) return null;
-
-  const pixels = new Uint8Array(rowBytes * height);
   let src = 0;
   for (let y = 0; y < height; y++) {
-    const filter = raw[src++];
-    const row = y * rowBytes;
+    const filter = raw[src++], row = y * rowBytes;
+    if (filter > 4) return null;
     for (let x = 0; x < rowBytes; x++) {
-      const value = raw[src++];
-      const left = x >= channels ? pixels[row + x - channels] : 0;
-      const up = y ? pixels[row - rowBytes + x] : 0;
-      const upperLeft = y && x >= channels ? pixels[row - rowBytes + x - channels] : 0;
-      const prediction = filter === 0 ? 0
-        : filter === 1 ? left
-        : filter === 2 ? up
-        : filter === 3 ? Math.floor((left + up) / 2)
-        : filter === 4 ? paeth(left, up, upperLeft)
-        : null;
-      if (prediction == null) return null;
-      pixels[row + x] = (value + prediction) & 0xff;
+      const left = x >= channels ? pixels[row + x - channels] : 0, up = y ? pixels[row - rowBytes + x] : 0, corner = y && x >= channels ? pixels[row - rowBytes + x - channels] : 0;
+      const prediction = filter === 0 ? 0 : filter === 1 ? left : filter === 2 ? up : filter === 3 ? (left + up) >> 1 : paeth(left, up, corner);
+      pixels[row + x] = (raw[src++] + prediction) & 255;
     }
   }
-
   const data = new Uint8Array(width * height * 4);
-  for (let i = 0, j = 0; i < width * height; i++, j += channels) {
-    const out = i * 4;
-    if (colorType === 0) {
-      data[out] = data[out + 1] = data[out + 2] = pixels[j];
-      data[out + 3] = 255;
-    } else if (colorType === 2) {
-      data[out] = pixels[j + 2];
-      data[out + 1] = pixels[j + 1];
-      data[out + 2] = pixels[j];
-      data[out + 3] = 255;
-    } else if (colorType === 4) {
-      data[out] = data[out + 1] = data[out + 2] = pixels[j];
-      data[out + 3] = pixels[j + 1];
-    } else {
-      data[out] = pixels[j + 2];
-      data[out + 1] = pixels[j + 1];
-      data[out + 2] = pixels[j];
-      data[out + 3] = pixels[j + 3];
-    }
+  for (let i = 0, p = 0; i < width * height; i++, p += channels) {
+    const out = i * 4, gray = color === 0 || color === 4;
+    data[out] = gray ? pixels[p] : pixels[p + 2]; data[out + 1] = pixels[p + (gray ? 0 : 1)]; data[out + 2] = pixels[p];
+    data[out + 3] = color === 4 ? pixels[p + 1] : color === 6 ? pixels[p + 3] : 255;
   }
   return { rect: { x: 0, y: 0, width, height }, format: "bgra8", data };
 }
 
+function rgbDiff(a, ai, b, bi) { return Math.abs(a[ai] - b[bi]) + Math.abs(a[ai + 1] - b[bi + 1]) + Math.abs(a[ai + 2] - b[bi + 2]); }
 function imageScoreAt(source, template, ox, oy, threshold) {
-  const sw = source.rect.width;
-  const tw = template.rect.width;
-  const th = template.rect.height;
-  const total = tw * th * 3 * 255;
-  const maxDiff = (1 - threshold) * total;
+  const sw = source.rect.width, tw = template.rect.width, th = template.rect.height, total = tw * th * 765, max = (1 - threshold) * total;
   let diff = 0;
-
-  for (let y = 0; y < th; y++) {
-    let si = ((oy + y) * sw + ox) * 4;
-    let ti = y * tw * 4;
-    for (let x = 0; x < tw; x++, si += 4, ti += 4) {
-      diff += Math.abs(source.data[si] - template.data[ti]);
-      diff += Math.abs(source.data[si + 1] - template.data[ti + 1]);
-      diff += Math.abs(source.data[si + 2] - template.data[ti + 2]);
-      if (diff > maxDiff) return 0;
-    }
+  for (let y = 0; y < th; y++) for (let x = 0; x < tw; x++) {
+    diff += rgbDiff(source.data, ((oy + y) * sw + ox + x) * 4, template.data, (y * tw + x) * 4);
+    if (diff > max) return 0;
   }
   return 1 - diff / total;
 }
-
 function imageProbe(source, template, ox, oy, threshold) {
-  const sw = source.rect.width;
-  const tw = template.rect.width;
-  const th = template.rect.height;
-  const xs = [...new Set([0, Math.floor(tw / 2), tw - 1])];
-  const ys = [...new Set([0, Math.floor(th / 2), th - 1])];
-  let diff = 0;
-  let count = 0;
-  for (const y of ys) {
-    for (const x of xs) {
-      const si = ((oy + y) * sw + ox + x) * 4;
-      const ti = (y * tw + x) * 4;
-      diff += Math.abs(source.data[si] - template.data[ti]);
-      diff += Math.abs(source.data[si + 1] - template.data[ti + 1]);
-      diff += Math.abs(source.data[si + 2] - template.data[ti + 2]);
-      count++;
-    }
-  }
-  return 1 - diff / (count * 3 * 255) >= Math.max(0, threshold - 0.03);
+  const sw = source.rect.width, tw = template.rect.width, th = template.rect.height;
+  const xs = [...new Set([0, tw >> 1, tw - 1])], ys = [...new Set([0, th >> 1, th - 1])];
+  let diff = 0, count = 0;
+  for (const y of ys) for (const x of xs) { diff += rgbDiff(source.data, ((oy + y) * sw + ox + x) * 4, template.data, (y * tw + x) * 4); count++; }
+  return 1 - diff / (count * 765) >= Math.max(0, threshold - .03);
 }
-
-function findImage(source, template, similarity = 0.98) {
+function findImage(source, template, similarity = .98) {
   if (!source || !template) return null;
   similarity = Math.max(0, Math.min(1, Number(similarity)));
-  const sw = source.rect.width;
-  const sh = source.rect.height;
-  const tw = template.rect.width;
-  const th = template.rect.height;
+  const { width: sw, height: sh } = source.rect, { width: tw, height: th } = template.rect;
   if (tw > sw || th > sh) return null;
-
-  for (let y = 0; y <= sh - th; y++) {
-    for (let x = 0; x <= sw - tw; x++) {
-      if (!imageProbe(source, template, x, y, similarity)) continue;
-      const score = imageScoreAt(source, template, x, y, similarity);
-      if (score >= similarity) {
-        return {
-          rect: { x: source.rect.x + x, y: source.rect.y + y, width: tw, height: th },
-          similarity: score,
-        };
-      }
-    }
+  for (let y = 0; y <= sh - th; y++) for (let x = 0; x <= sw - tw; x++) {
+    if (!imageProbe(source, template, x, y, similarity)) continue;
+    const score = imageScoreAt(source, template, x, y, similarity);
+    if (score >= similarity) return { rect: { x: source.rect.x + x, y: source.rect.y + y, width: tw, height: th }, similarity: score };
   }
   return null;
 }
 
 function imageChange(before, after) {
   if (!before || !after) return null;
-  const width = after.rect.width;
-  const height = after.rect.height;
-  const total = width * height;
+  const { width, height } = after.rect, total = width * height;
   if (!total) return null;
-
-  if (before.rect.width !== width || before.rect.height !== height) {
-    return { rect: after.rect, changed: total, percent: 100, bounds: after.rect };
+  if (before.rect.width !== width || before.rect.height !== height) return { rect: after.rect, changed: total, percent: 100, bounds: after.rect };
+  let changed = 0, minX = width, minY = height, maxX = -1, maxY = -1;
+  for (let p = 0; p < total; p++) {
+    const i = p * 4;
+    if (!rgbDiff(before.data, i, after.data, i)) continue;
+    const x = p % width, y = Math.floor(p / width); changed++;
+    minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
   }
-
-  let changed = 0;
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4;
-      if (
-        before.data[i] === after.data[i] &&
-        before.data[i + 1] === after.data[i + 1] &&
-        before.data[i + 2] === after.data[i + 2]
-      ) continue;
-      changed++;
-      if (x < minX) minX = x;
-      if (x > maxX) maxX = x;
-      if (y < minY) minY = y;
-      if (y > maxY) maxY = y;
-    }
-  }
-
-  return {
-    rect: after.rect,
-    changed,
-    percent: changed * 100 / total,
-    bounds: changed ? {
-      x: after.rect.x + minX,
-      y: after.rect.y + minY,
-      width: maxX - minX + 1,
-      height: maxY - minY + 1,
-    } : null,
-  };
+  const bounds = changed ? { x: after.rect.x + minX, y: after.rect.y + minY, width: maxX - minX + 1, height: maxY - minY + 1 } : null;
+  return { rect: after.rect, changed, percent: changed * 100 / total, bounds };
 }
 
 async function prepareWaitCondition(kind, spec) {
   if (kind === "window") return { window: spec };
-  if (kind === "ocr") {
-    if (!spec || typeof spec !== "object" || spec.text == null) return null;
-    return spec;
-  }
+  if (kind === "ocr") return spec && typeof spec === "object" && spec.text != null ? spec : null;
   if (kind === "image") {
     if (typeof spec === "string") spec = { path: spec };
     if (!spec || typeof spec !== "object" || !spec.path) return null;
-    const template = await readPng(spec.path);
-    return template ? { spec, template } : null;
+    const template = await readPng(spec.path); return template && { spec, template };
   }
-  if (kind === "change") {
-    if (spec == null) spec = {};
-    if (typeof spec !== "object" || Array.isArray(spec)) return null;
-    if (spec.percent != null) {
-      const percent = Number(spec.percent);
-      if (!Number.isFinite(percent) || percent < 0 || percent > 100) return null;
-    }
-    return { spec, baseline: null };
-  }
-  return null;
+  if (kind !== "change") return null;
+  spec ??= {};
+  if (typeof spec !== "object" || Array.isArray(spec)) return null;
+  const percent = spec.percent == null ? 0 : Number(spec.percent);
+  return Number.isFinite(percent) && percent >= 0 && percent <= 100 ? { spec, baseline: null } : null;
 }
 
 async function testWaitCondition(kind, prepared) {
+  const none = { matched: false, value: null };
   try {
-    if (kind === "window") {
-      const value = window_get(prepared);
-      return { matched: !!value, value };
-    }
-    if (kind === "ocr") {
-      const { text, ...source } = prepared;
-      const value = await ocr(source);
-      return { matched: !!value && regexMatch(value.text, text), value };
-    }
+    if (kind === "window") { const value = window_get(prepared); return { matched: !!value, value }; }
+    if (kind === "ocr") { const { text, ...source } = prepared, value = await ocr(source); return { matched: !!value && regexMatch(value.text, text), value }; }
     if (kind === "image") {
-      const { path, similarity = 0.98, ...source } = prepared.spec;
-      const match = findImage(captureScreenshot(source), prepared.template, similarity);
-      return {
-        matched: !!match,
-        value: match ? { path, ...match } : null,
-      };
+      const { path, similarity = .98, ...source } = prepared.spec, match = findImage(captureScreenshot(source), prepared.template, similarity);
+      return { matched: !!match, value: match ? { path, ...match } : null };
     }
     if (kind === "change") {
-      const { percent, ...source } = prepared.spec;
-      const image = captureScreenshot(source);
-      if (!image) return { matched: false, value: null };
-      if (!prepared.baseline) {
-        prepared.baseline = image;
-        return { ready: false, matched: false, value: null };
-      }
+      const { percent, ...source } = prepared.spec, image = captureScreenshot(source);
+      if (!image) return none;
+      if (!prepared.baseline) { prepared.baseline = image; return { ready: false, ...none }; }
       const value = imageChange(prepared.baseline, image);
-      const threshold = percent == null ? 0 : Number(percent);
-      return {
-        matched: !!value && value.changed > 0 && value.percent >= threshold,
-        value,
-      };
+      return { matched: !!value?.changed && value.percent >= Number(percent ?? 0), value };
     }
-  } catch {
-    // A temporarily unavailable target is simply a false polling sample.
-  }
-  return { matched: false, value: null };
+  } catch { /* unavailable target = false sample */ }
+  return none;
 }
 
 function resourceRefs(value, resources, found = new Set(), seen = new Set()) {

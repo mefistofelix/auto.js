@@ -64,53 +64,26 @@ const SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOZORDER = 4, SWP_NOACTIVATE = 0x10, S
 const INPUT_MOUSE = 0, INPUT_KEYBOARD = 1, KEYEVENTF_EXTENDEDKEY = 1, KEYEVENTF_KEYUP = 2, KEYEVENTF_UNICODE = 4;
 const MOUSEEVENTF_WHEEL = 0x0800, WHEEL_DELTA = 120;
 
-function sleepSync(ms) {
-  const a = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(a, 0, 0, ms);
-}
-
+function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 function timeMs(value, fallback = 0) {
   if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
-  if (typeof value !== "string") return fallback;
-  const match = value.trim().match(/^(\d+(?:\.\d*)?|\.\d+)\s*(ms|s|m)$/i);
+  const match = typeof value === "string" && value.trim().match(/^(\d+(?:\.\d*)?|\.\d+)\s*(ms|s|m)$/i);
   if (!match) return fallback;
-  const amount = Number(match[1]);
-  const unit = match[2].toLowerCase();
-  return amount * (unit === "m" ? 60000 : unit === "s" ? 1000 : 1);
+  return +match[1] * ({ ms: 1, s: 1000, m: 60000 })[match[2].toLowerCase()];
 }
-
-function delay(value) {
-  return new Promise((resolve) => setTimeout(resolve, timeMs(value)));
-}
-
+function delay(value) { return new Promise((resolve) => setTimeout(resolve, timeMs(value))); }
 export async function wait(options = 0) {
-  if (typeof options !== "object" || options == null || Array.isArray(options)) {
-    await delay(options);
-    return true;
-  }
-
+  if (!options || typeof options !== "object" || Array.isArray(options)) { await delay(options); return true; }
   const kinds = ["window", "ocr", "image", "change"].filter((key) => options[key] != null);
-  if (!kinds.length) {
-    await delay(options.time ?? options.ms ?? 0);
-    return true;
-  }
+  if (!kinds.length) { await delay(options.time ?? options.ms ?? 0); return true; }
   if (kinds.length !== 1) return null;
-
-  const kind = kinds[0];
-  const prepared = await prepareWaitCondition(kind, options[kind]);
+  const kind = kinds[0], prepared = await prepareWaitCondition(kind, options[kind]);
   if (!prepared) return null;
-  const timeout = timeMs(options.timeout, 10000);
-  const interval = Math.max(1, timeMs(options.interval, 100));
-  const until = performance.now() + timeout;
-
+  const until = performance.now() + timeMs(options.timeout, 10000), interval = Math.max(1, timeMs(options.interval, 100));
   for (;;) {
     const state = await testWaitCondition(kind, prepared);
-    if (state.ready !== false && (options.not ? !state.matched : state.matched)) {
-      return options.not ? true : state.value;
-    }
-    const remaining = until - performance.now();
-    if (remaining <= 0) return null;
-    await delay(Math.min(interval, remaining));
+    if (state.ready !== false && (options.not ? !state.matched : state.matched)) return options.not ? true : state.value;
+    const remaining = until - performance.now(); if (remaining <= 0) return null; await delay(Math.min(interval, remaining));
   }
 }
 
@@ -350,19 +323,11 @@ export function window_get({ window = {}, text = false } = {}) {
 export function window_wait({ window = {}, timeout = 5000, interval = 50 } = {}) { return wait({ window, timeout, interval }); }
 
 function sessionLocked() {
-  const buffer = new BigUint64Array(1);
-  const bytes = new Uint32Array(1);
-  if (!wtsapi32.symbols.WTSQuerySessionInformationW(null, 0xffffffff, 25, buffer, bytes) || !buffer[0]) return null;
-  const pointer = Deno.UnsafePointer.create(buffer[0]);
-  try {
-    if (bytes[0] < 20) return null;
-    const data = new DataView(new Deno.UnsafePointerView(pointer).getArrayBuffer(bytes[0]));
-    if (data.getUint32(0, true) !== 1) return null;
-    const state = data.getInt32(16, true);
-    return state === 0 ? true : state === 1 ? false : null;
-  } finally {
-    wtsapi32.symbols.WTSFreeMemory(pointer);
-  }
+  const out = new BigUint64Array(1), bytes = new Uint32Array(1);
+  if (!wtsapi32.symbols.WTSQuerySessionInformationW(null, 0xffffffff, 25, out, bytes) || !out[0]) return null;
+  const pointer = asPointer(out[0]);
+  try { const data = bytes[0] >= 20 && new DataView(new Deno.UnsafePointerView(pointer).getArrayBuffer(bytes[0])); if (!data || data.getUint32(0, true) !== 1) return null; const state = data.getInt32(16, true); return state === 0 ? true : state === 1 ? false : null; }
+  finally { wtsapi32.symbols.WTSFreeMemory(pointer); }
 }
 
 export function system({ wake, awake } = {}) {
@@ -373,33 +338,16 @@ export function system({ wake, awake } = {}) {
 }
 
 function focusWindow(info) {
-  const hwnd = asPointer(info.wid);
-  const currentTid = kernel32.symbols.GetCurrentThreadId();
-  const targetTid = info._tid;
-
+  const hwnd = asPointer(info.wid), current = kernel32.symbols.GetCurrentThreadId();
   for (let attempt = 0; attempt < 3; attempt++) {
-    const foreground = user32.symbols.GetForegroundWindow();
-    const foregroundPid = new Uint32Array(1);
-    const foregroundTid = foreground
-      ? user32.symbols.GetWindowThreadProcessId(foreground, foregroundPid)
-      : 0;
-    const attached = [];
+    const foreground = user32.symbols.GetForegroundWindow(), foregroundTid = foreground ? user32.symbols.GetWindowThreadProcessId(foreground, new Uint32Array(1)) : 0, attached = [];
     try {
-      for (const tid of new Set([foregroundTid, targetTid])) if (tid && tid !== currentTid && user32.symbols.AttachThreadInput(currentTid, tid, 1)) attached.push(tid);
-      user32.symbols.ShowWindow(hwnd, 9);
-      user32.symbols.BringWindowToTop(hwnd);
-      user32.symbols.SetForegroundWindow(hwnd);
-      user32.symbols.SetFocus(hwnd);
-    } finally {
-      for (const tid of attached.reverse()) user32.symbols.AttachThreadInput(currentTid, tid, 0);
-    }
-
-    sleepSync(30);
-    if (ptrValue(user32.symbols.GetForegroundWindow()) === ptrValue(hwnd)) return;
+      for (const tid of new Set([foregroundTid, info._tid])) if (tid && tid !== current && user32.symbols.AttachThreadInput(current, tid, 1)) attached.push(tid);
+      user32.symbols.ShowWindow(hwnd, 9); user32.symbols.BringWindowToTop(hwnd); user32.symbols.SetForegroundWindow(hwnd); user32.symbols.SetFocus(hwnd);
+    } finally { for (const tid of attached.reverse()) user32.symbols.AttachThreadInput(current, tid, 0); }
+    sleepSync(30); if (ptrValue(user32.symbols.GetForegroundWindow()) === ptrValue(hwnd)) return;
   }
-
-  const actual = user32.symbols.GetForegroundWindow();
-  throw new Error(`Failed to focus ${info.wid}; foreground is ${actual ? ptrId(actual) : "none"}`);
+  const actual = user32.symbols.GetForegroundWindow(); throw new Error(`Failed to focus ${info.wid}; foreground is ${actual ? ptrId(actual) : "none"}`);
 }
 
 export function window_control({ window = {}, display, action, pos, rect } = {}) {
@@ -418,38 +366,22 @@ export function window_control({ window = {}, display, action, pos, rect } = {})
 const WINDOW_FRAMES = { none: 0, border: WS_BORDER, caption: WS_CAPTION | WS_SYSMENU, resizable: WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX };
 function setWindowTitle(hwnd, title) { const text = wide(String(title), true); return sendMessage(hwnd, WM_SETTEXT, 0n, Deno.UnsafePointer.of(text)) != null; }
 function setWindowFrame(hwnd, frame) {
-  const bits = WINDOW_FRAMES[String(frame).toLowerCase()];
-  if (bits == null) return false;
-  const style = user32.symbols.GetWindowLongW(hwnd, GWL_STYLE) >>> 0;
-  user32.symbols.SetWindowLongW(hwnd, GWL_STYLE, ((style & ~FRAME_STYLE_MASK) | bits) | 0);
+  const bits = WINDOW_FRAMES[String(frame).toLowerCase()]; if (bits == null) return false;
+  const style = user32.symbols.GetWindowLongW(hwnd, GWL_STYLE) >>> 0; user32.symbols.SetWindowLongW(hwnd, GWL_STYLE, ((style & ~FRAME_STYLE_MASK) | bits) | 0);
   return !!user32.symbols.SetWindowPos(hwnd, null, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 }
-function setWindowTopmost(hwnd, value) {
-  const after = Deno.UnsafePointer.create(value ? 0xffffffffffffffffn : 0xfffffffffffffffen);
-  return !!user32.symbols.SetWindowPos(hwnd, after, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE);
-}
-
+function setWindowTopmost(hwnd, value) { return !!user32.symbols.SetWindowPos(hwnd, Deno.UnsafePointer.create(value ? 0xffffffffffffffffn : 0xfffffffffffffffen), 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE); }
 function setWindowOpacity(hwnd, opacity) {
-  opacity = Number(opacity);
-  if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) return false;
-  const ex = user32.symbols.GetWindowLongW(hwnd, GWL_EXSTYLE) >>> 0;
-  if (!(ex & WS_EX_LAYERED)) user32.symbols.SetWindowLongW(hwnd, GWL_EXSTYLE, (ex | WS_EX_LAYERED) | 0);
+  opacity = Number(opacity); if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) return false;
+  const ex = user32.symbols.GetWindowLongW(hwnd, GWL_EXSTYLE) >>> 0; if (!(ex & WS_EX_LAYERED)) user32.symbols.SetWindowLongW(hwnd, GWL_EXSTYLE, (ex | WS_EX_LAYERED) | 0);
   return !!user32.symbols.SetLayeredWindowAttributes(hwnd, 0, Math.round(opacity * 255), LWA_ALPHA);
 }
 
 export async function window_set({ window = {}, title, frame, topmost, opacity, enabled, highlight: mark } = {}) {
-  const info = windowRecords(window)[0];
-  if (!info) return null;
-  const hwnd = asPointer(info.wid);
-
-  if (title != null) setWindowTitle(hwnd, title);
-  if (frame != null) setWindowFrame(hwnd, frame);
-  if (topmost != null) setWindowTopmost(hwnd, !!topmost);
-  if (opacity != null) setWindowOpacity(hwnd, opacity);
-  if (enabled != null) user32.symbols.EnableWindow(hwnd, enabled ? 1 : 0);
-
-  if (mark) await highlight({ window: { wid: info.wid }, duration: mark === true ? 800 : mark });
-  return window_get({ window: { wid: info.wid } });
+  const info = windowRecords(window)[0]; if (!info) return null; const hwnd = asPointer(info.wid);
+  if (title != null) setWindowTitle(hwnd, title); if (frame != null) setWindowFrame(hwnd, frame); if (topmost != null) setWindowTopmost(hwnd, !!topmost);
+  if (opacity != null) setWindowOpacity(hwnd, opacity); if (enabled != null) user32.symbols.EnableWindow(hwnd, enabled ? 1 : 0);
+  if (mark) await highlight({ window: { wid: info.wid }, duration: mark === true ? 800 : mark }); return window_get({ window: { wid: info.wid } });
 }
 
 export function window_hit({ pos, display, child = false } = {}) {

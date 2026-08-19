@@ -466,6 +466,7 @@ try {
     await eventually(() => editValue() === afterType, "typed text did not reach fixture edit");
     const repeated = await keyb({ press: "backspace", repeat: 2, interval: 10 });
     same(repeated.repeat, 2, "keyb repeat output failed");
+    same((await keyb({ press: [], repeat: 0 })).press.length, 0, "invalid keyb repeat should fall back without throwing");
     const shortened = afterType.slice(0, -2);
     await eventually(() => editValue() === shortened, "repeated backspace did not reach fixture edit");
     const mapped = await keyb({ press: "@" });
@@ -618,7 +619,7 @@ try {
     { state: { "bad path": 1 } },
     { unknown_action: {} },
     {},
-    { keyb: { press: "a", repeat: 0 } },
+    { input_sel: { read: true, write: "x" } },
     { display_find: { display: { index: 0 } } },
   ])).results;
   same(diagnostics[0]?.error, "unresolved reference", "missing scenario reference should be diagnosed");
@@ -628,9 +629,8 @@ try {
   same(diagnostics[2]?.error, "unknown action", "unknown action should be diagnosed");
   same(diagnostics[2]?.action, "unknown_action", "unknown-action diagnostic should identify the action");
   same(diagnostics[3]?.error, "invalid action", "malformed action should be diagnosed instead of thrown");
-  same(diagnostics[4]?.error, "action failed", "runtime action failure should be diagnosed");
-  same(diagnostics[4]?.action, "keyb", "runtime diagnostic should identify the action");
-  assert(diagnostics[4]?.message?.includes("Invalid repeat"), "runtime diagnostic should preserve the concise cause");
+  same(diagnostics[4]?.error, "no result", "forgivable user input should not become a runtime exception");
+  same(diagnostics[4]?.action, "input_sel", "no-result diagnostic should identify the action");
   same(diagnostics[5].length, 1, "run should continue after diagnosed failures");
   same((await run({})).results[0]?.error, "invalid scenario", "non-array scenario should be diagnosed");
   check("run curr/prev/ret/state, diagnostics, interpolation, push/delete, image resource lifetime");

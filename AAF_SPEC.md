@@ -393,7 +393,7 @@ The resulting accessibility record with an additional `action` field, or `null` 
 - `up` — release one named key or chord.
 - `duration` — total [time value](#time-values) for `type`. When both `duration` and `interval` are supplied, `duration` silently takes precedence. With `user()`, typing uses independent human-like per-character delays instead of a fixed total.
 - `interval` — [time value](#time-values) between characters for `type` or between repeated `press` operations; default `0`.
-- `repeat` — positive integer, default `1`; valid only with `press`.
+- `repeat` — positive integer, default `1`; used only with `press`. Invalid values fall back to `1`; when `press` is absent the field is ignored.
 
 Named keys include letters and digits; Backspace, Tab, Enter, Escape and navigation keys; Caps/Num/Scroll Lock; Print Screen; left/right Shift, Ctrl, Alt and Windows keys; numpad keys; F1–F24; Apps/context-menu; and common browser, volume, media and launch keys. Numeric virtual-key codes remain available for backend-specific cases.
 
@@ -523,7 +523,7 @@ On the current Windows backend, standard Edit/RichEdit controls use native selec
 - `window` — optional [window filter](#window-filters). When supported, input is posted directly to that native window instead of moving the physical cursor.
 - `pos` — [position](#position-and-rectangle) for the operation; direct-window mode defaults to `centerWC`.
 - `display` — optional [display](#displays) geometry context.
-- `repeat` — positive integer, default `1`; valid only with `click`.
+- `repeat` — positive integer, default `1`; used only with `click`. Invalid values fall back to `1`; for other mouse operations the field is ignored.
 - `interval` — [time value](#time-values) between repeated clicks, default `0`; `rand(...)` or `user()` may vary each gap.
 
 Exactly one of `click`, `down`, `up`, `wheel`, or `hwheel` is allowed.
@@ -1134,14 +1134,14 @@ Typical diagnostics are intentionally compact:
   action: unknown_action
 
 - error: no result
-  action: screenshot_save
+  action: input_sel
 
 - error: action failed
-  action: keyb
-  message: "Invalid repeat: 0"
+  action: ocr
+  message: "Windows OCR backend failed"
 ```
 
-`error` is the short category. Optional `action`, `path`, or `image` identifies what failed. `message` is used only when a concise underlying runtime cause is useful. Stack traces are not part of AAF output. A malformed action is reported as `error: invalid action`; a non-array `run()` input returns `{results: [{error: "invalid scenario", ...}], state: {}}`. A diagnostic from a non-`state` step becomes the new `$.ret`. Its resolved input becomes `$.prev` when input resolution succeeded. A failed `state` step changes neither state, `$.prev`, nor `$.ret`.
+`error` is the short category. Optional `action`, `path`, or `image` identifies what failed. Ordinary user-level mistakes are best-effort: unsupported values, conflicting primitive arguments, invalid regexes, irrelevant optional fields, or invalid repeat counts should normally produce `null`, no match, a no-op, or documented precedence/fallback rather than an exception. `message` is reserved for concise underlying runtime causes when a genuinely blocking backend operation fails. Stack traces are not part of AAF output. A malformed scenario action is still reported as `error: invalid action`; a non-array `run()` input returns `{results: [{error: "invalid scenario", ...}], state: {}}`. A diagnostic from a non-`state` step becomes the new `$.ret`. Its resolved input becomes `$.prev` when input resolution succeeded. A failed `state` step changes neither state, `$.prev`, nor `$.ret`.
 
 A new run starts with an empty state and no resources.
 

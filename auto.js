@@ -156,7 +156,7 @@ function getWindowInfo(hwnd, monitors = displayMap()) {
   };
 }
 function publicWindow({ _tid, ...window }) { return window; }
-function regexMatch(value, pattern) { try { return new RegExp(String(pattern), "i").test(String(value ?? "")); } catch { throw new Error(`Invalid regex: ${pattern}`); } }
+function regexMatch(value, pattern) { try { return new RegExp(String(pattern), "i").test(String(value ?? "")); } catch { return false; } }
 function normalizeWindowFilter(filter) {
   if (filter == null) return {}; if (typeof filter === "string") return filter.startsWith("0x") ? { wid: filter } : { title: filter };
   return typeof filter === "number" || typeof filter === "bigint" ? { wid: ptrId(asPointer(filter)) } : filter;
@@ -184,7 +184,7 @@ const WINDOW_FIELDS = {
   wid: [false, filterId], wpid: [true, filterId], woid: [true, filterId],
   depth: [false, (a, b) => anyFilter(b, (v) => String(v).toLowerCase() === "all" || a === Number(v))], zorder: [false, filterNum],
   pid: [false, filterNum], title: [false, regexFilter], bin: [false, regexFilter], class: [false, regexFilter],
-  display: [false, (a, b) => anyFilter(b, (v) => a === resolveDisplay(v).index)], status: [false, filterString],
+  display: [false, (a, b) => anyFilter(b, (v) => a === tryDisplay(v)?.index)], status: [false, filterString],
   hidden: [false, filterBool], foreground: [false, filterBool],
 };
 function matchesWindowRelation(window, direction, spec, tree) {
@@ -237,7 +237,7 @@ function textRange(text, selection) {
   } else if (typeof selection === "string") {
     let match;
     try { match = new RegExp(selection, "i").exec(text); }
-    catch { throw new Error(`Invalid regex: ${selection}`); }
+    catch { return null; }
     if (!match) return null;
     start = match.index;
     end = start + match[0].length;
@@ -261,7 +261,7 @@ function focusedControl() {
 export function input_sel(options = {}) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
   const read = own(options, "read"), write = own(options, "write"), select = own(options, "select");
-  if (Number(read) + Number(write) + Number(select) !== 1) throw new Error("input_sel requires exactly one of read, write, select");
+  if (Number(read) + Number(write) + Number(select) !== 1) return null;
   const found = options.window == null ? null : windowRecords(options.window)[0];
   const hwnd = options.window == null ? focusedControl() : found ? asPointer(found.wid) : null;
   if (!hwnd || !textControl(hwnd)) return null;
@@ -308,14 +308,14 @@ function focusWindow(info) {
     } finally { for (const tid of attached.reverse()) user32.symbols.AttachThreadInput(current, tid, 0); }
     sleepSync(30); if (ptrValue(user32.symbols.GetForegroundWindow()) === ptrValue(hwnd)) return;
   }
-  const actual = user32.symbols.GetForegroundWindow(); throw new Error(`Failed to focus ${info.wid}; foreground is ${actual ? ptrId(actual) : "none"}`);
+  return false;
 }
 export function window_control({ window = {}, display, action, pos, rect } = {}) {
   const info = windowRecords(window)[0];
   if (!info) return null;
   const hwnd = asPointer(info.wid), show = { restore: 9, minimize: 6, maximize: 3 }[action];
   if (show) user32.symbols.ShowWindow(hwnd, show);
-  else if (action === "focus") { try { focusWindow(info); } catch { /* best effort */ } }
+  else if (action === "focus") focusWindow(info);
   else if (action === "move" || action === "size") {
     const geometry = geometryContext(info, display), next = positionRect(resolveRect(rect, info.rect, geometry), pos, geometry);
     if (next.width > 0 && next.height > 0) user32.symbols.SetWindowPos(hwnd, null, next.x, next.y, next.width, next.height, SWP_NOZORDER | SWP_NOACTIVATE);
@@ -439,8 +439,7 @@ function captureScreenshot(options = {}) {
 }
 function imageCodec(format, path) {
   const codec = String(format ?? path?.match(/\.(png|webp)$/i)?.[1] ?? "webp").toLowerCase();
-  if (codec !== "png" && codec !== "webp") throw new Error(`Unsupported image format: ${codec}`);
-  return codec;
+  return codec === "png" || codec === "webp" ? codec : null;
 }
 function swapRedBlue(data) {
   const out = new Uint8Array(data).slice();
@@ -456,7 +455,9 @@ function sharpImage({ rect: { width, height }, data }) {
 }
 async function saveImage(image, path, format) {
   if (!path) return {};
-  const codec = imageCodec(format, path), pipeline = sharpImage(image);
+  const codec = imageCodec(format, path);
+  if (!codec) return {};
+  const pipeline = sharpImage(image);
   const bytes = codec === "webp" ? await pipeline.webp({ quality: 80 }).toBuffer() : await pipeline.png().toBuffer();
   await Deno.writeFile(path, bytes);
   return { path, bytes: bytes.length, format: codec };
@@ -585,26 +586,24 @@ function postMouseWheel(hwnd, amount, point, horizontal = false) {
 const heldMouse = new Map();
 export function mouse_button(options = {}) {
   const { click, down, up, wheel, hwheel, window, display, pos, repeat = 1, interval = 0 } = options, actions = Object.entries({ click, down, up, wheel, hwheel }).filter(([, value]) => value != null);
-  if (actions.length !== 1) throw new Error("mouse_button requires exactly one of click, down, up, wheel, hwheel");
-  const [action, value] = actions[0];
-  if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`Invalid repeat: ${repeat}`);
-  if (repeat !== 1 && action !== "click") throw new Error("mouse_button repeat is only valid with click");
+  if (actions.length !== 1) return null;
+  const [action, value] = actions[0], count = Number.isInteger(repeat) && repeat > 0 ? repeat : 1;
   const info = window == null ? null : windowRecords(window)[0];
   if (window != null && !info) return null;
   const target = mouseTarget(info, display, pos, info ? "centerWC" : null), point = target?.to, direct = !!info;
   if (!point || (!direct && pos != null && !user32.symbols.SetCursorPos(point.x, point.y))) return null;
   if (action === "wheel" || action === "hwheel") {
     const amount = Number(value), horizontal = action === "hwheel";
-    if (!Number.isFinite(amount)) throw new Error(`Invalid ${action} amount: ${value}`);
+    if (!Number.isFinite(amount)) return null;
     direct ? postMouseWheel(asPointer(info.wid), amount, point, horizontal) : mouseInput(horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL, Math.round(amount * WHEEL_DELTA));
     return { [action]: amount, ...(direct && { wid: info.wid }), pos: point };
   }
   const button = String(value).toLowerCase(), spec = mouseButtons[button];
-  if (!spec) throw new Error(`Unknown mouse button: ${value}`);
+  if (!spec) return null;
   const send = (down) => direct ? postMouseButton(asPointer(info.wid), spec, down, point) : mouseInput(spec.input[down ? 0 : 1]), hold = `${direct ? info.wid.toLowerCase() : "physical"}:${button}`;
-  if (action === "click") for (let i = 0; i < repeat; i++) { send(true); send(false); const pause = timeMs(interval, 0, options); if (pause && i + 1 < repeat) sleepSync(pause); }
+  if (action === "click") for (let i = 0; i < count; i++) { send(true); send(false); const pause = timeMs(interval, 0, options); if (pause && i + 1 < count) sleepSync(pause); }
   else { const isDown = action === "down"; send(isDown); if (isDown) heldMouse.set(hold, { direct, wid: info?.wid, button, point }); else heldMouse.delete(hold); }
-  return { [action]: button, ...(repeat !== 1 && { repeat }), ...(direct && { wid: info.wid }), pos: point };
+  return { [action]: button, ...(action === "click" && count !== 1 && { repeat: count }), ...(direct && { wid: info.wid }), pos: point };
 }
 const VK = Object.fromEntries([
   [8,"backspace back"],[9,"tab"],[12,"clear"],[13,"enter return"],[16,"shift"],[17,"ctrl control"],[18,"alt"],[19,"pause"],[20,"capslock"],
@@ -695,12 +694,10 @@ async function typeText(text, interval, duration, action) {
 }
 export async function keyb(options = {}) {
   const { press, down, up, type, repeat = 1, interval = 0, duration } = options;
-  if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`Invalid repeat: ${repeat}`);
-  if (repeat !== 1 && press == null) throw new Error("keyb repeat is only valid with press");
-  const result = {};
+  const count = Number.isInteger(repeat) && repeat > 0 ? repeat : 1, result = {};
   if (press != null) {
-    for (let i = 0; i < repeat; i++) { result.press = await pressKeys(press); const pause = timeMs(interval,0,options); if (pause > 0 && i + 1 < repeat) await delay(pause); }
-    if (repeat !== 1) result.repeat = repeat;
+    for (let i = 0; i < count; i++) { result.press = await pressKeys(press); const pause = timeMs(interval,0,options); if (pause > 0 && i + 1 < count) await delay(pause); }
+    if (count !== 1) result.repeat = count;
   }
   if (down != null) result.down = keyNames(down).filter((name) => keyState(name, true));
   if (up != null) result.up = keyNames(up).filter((name) => keyState(name, false));
@@ -755,7 +752,7 @@ function clipboardClear() { return withClipboard(() => { if (!user32.symbols.Emp
 export function clipboard(options = {}) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
   const read = own(options, "read"), write = own(options, "write"), clear = own(options, "clear");
-  if (Number(read) + Number(write) + Number(clear) !== 1) throw new Error("clipboard requires exactly one of read, write, clear");
+  if (Number(read) + Number(write) + Number(clear) !== 1) return null;
   if (read) return options.read === true ? clipboardRead() : null;
   if (clear) return options.clear === true ? clipboardClear() : null;
   return clipboardWrite(options.write);
@@ -896,12 +893,11 @@ function uiaPattern(element, id) { return comPtr(element,16,[id],["i32"]); }
 const UIA_ACTION = { invoke:[10000,3], select:[10010,3], toggle:[10015,3], expand:[10005,3], collapse:[10005,4], set:[10002,3], scroll:[10017,3] };
 export function a11y_action({ a11y = {}, action, value } = {}) {
   action = String(action ?? "").toLowerCase();
-  if (action === "set" && value == null) throw new Error("a11y_action set requires value");
+  if ((action === "set" && value == null) || (action !== "focus" && !UIA_ACTION[action])) return null;
   return comUse(uiaResolve(a11y), element => {
     if (action === "focus") checkHR(comCall(element,3,"i32"),"IUIAutomationElement.SetFocus");
     else {
-      const spec = UIA_ACTION[action]; if (!spec) throw new Error(`Unknown accessibility action: ${action}`);
-      const pattern = uiaPattern(element,spec[0]); if (!pattern) return null;
+      const spec = UIA_ACTION[action], pattern = uiaPattern(element,spec[0]); if (!pattern) return null;
       try {
         if (action === "set") { const text = oleaut32.symbols.SysAllocString(wide(String(value ?? ""),true)); if (!text) throw new Error("SysAllocString failed"); try { checkHR(comCall(pattern,spec[1],"i32",["pointer"],[text]),"UI Automation set"); } finally { oleaut32.symbols.SysFreeString(text); } }
         else checkHR(comCall(pattern,spec[1],"i32"),`UI Automation ${action}`);

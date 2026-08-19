@@ -769,26 +769,29 @@ function checkHR(hr, label) {
   if (hr < 0) throw new Error(`${label} failed: HRESULT 0x${(hr >>> 0).toString(16)}`);
   return hr;
 }
-function comMethod(object, index, definition) {
-  const vtable = new Deno.UnsafePointerView(object).getPointer(0);
-  const fn = new Deno.UnsafePointerView(vtable).getPointer(index * POINTER_SIZE);
-  return new Deno.UnsafeFnPointer(fn, definition);
-}
 function comCall(object, index, result, parameters = [], args = []) {
-  return comMethod(object, index, { parameters: ["pointer", ...parameters], result }).call(object, ...args);
+  const vtable = new Deno.UnsafePointerView(object).getPointer(0);
+  const pointer = new Deno.UnsafePointerView(vtable).getPointer(index * POINTER_SIZE);
+  const fn = new Deno.UnsafeFnPointer(pointer, { parameters: ["pointer", ...parameters], result });
+  return fn.call(object, ...args);
 }
+
 function comOut(object, index, Out = BigUint64Array, length = 1, args = [], parameters = args.map(() => "pointer")) {
   const out = new Out(length);
   const hr = comCall(object, index, "i32", [...parameters, "buffer"], [...args, out]);
   return { hr, out };
 }
+
 function comPtr(object, index, args = [], parameters = args.map(() => "pointer"), label) {
   const { hr, out } = comOut(object, index, BigUint64Array, 1, args, parameters);
   if (label) checkHR(hr, label); else if (hr < 0) return null;
   return asPointer(out[0]);
 }
+
 function comRelease(...objects) { for (const object of objects) if (object) comCall(object, 2, "u32"); }
+
 function comUse(object, fn) { if (!object) return null; try { return fn(object); } finally { comRelease(object); } }
+
 function comQuery(object, iid) { return comPtr(object, 0, [guid(iid)], ["buffer"], "QueryInterface"); }
 const CLSID_CUIAutomation = "ff48dba4-60ef-4201-aa87-54103eef594e", IID_IUIAutomation = "30cbe57d-d9d0-452a-ab13-7ac5ac4825ee", CLSCTX_INPROC_SERVER = 1;
 const UIA_TYPES = "button calendar check-box combo-box edit hyperlink image list-item list menu menu-bar menu-item progress-bar radio-button scroll-bar slider spinner status-bar tab tab-item text tool-bar tool-tip tree tree-item custom group thumb data-grid data-item document split-button window pane header header-item table title-bar separator semantic-zoom app-bar".split(" ");
@@ -830,21 +833,26 @@ const UIA_PATTERNS = [
 function uiaActions(e, focusable) { const actions = []; for (const [,available,names] of UIA_PATTERNS) if (uiaVariant(e,available) === true) actions.push(...names); if (focusable) actions.push("focus"); return actions; }
 function uiaRecord(e) { const runtime = uiaRuntimeId(e), record = {uid:runtime?.join(".") ?? null,wid:uiaNativeWid(e),type:uiaTypeName(uiaInt(e,21)),rect:uiaRect(e),value:uiaVariant(e,30045)}; for (const [key,index,get] of UIA_RECORD) record[key] = get(e,index); record.actions = uiaActions(e,record.focusable); return record; }
 function normalizeUiaFilter(filter) { return filter == null ? {} : typeof filter === "string" ? {name:filter} : filter; }
+
 const A11Y_FIELDS = {uid:[false,filterExact],wid:[true,filterId],pid:[false,filterNum],aid:[false,regexFilter],name:[false,regexFilter],type:[false,(a,b)=>anyFilter(b,v=>a===normalizeUiaType(v))],class:[false,regexFilter],framework:[false,regexFilter],value:[false,regexFilter],enabled:[false,filterBool],focus:[false,filterBool],focusable:[false,filterBool],offscreen:[false,filterBool]};
-function matchesUiaOwn(record,filter) { return matchesFields(record,filter,A11Y_FIELDS); }
+
 function uiaWalk(root,direction,maxDepth,visitor) {
   if (direction === "up") { let current = uiaParent(root); for (let depth=1; current && depth<=maxDepth; depth++) { let next; try { if (visitor(current,depth)) return true; next = depth<maxDepth && uiaParent(current); } finally { comRelease(current); } current = next; } return false; }
   const down = (parent,depth) => { let child = uiaFirstChild(parent); while (child) { let next; try { if (visitor(child,depth) || (depth<maxDepth && down(child,depth+1))) return true; next = uiaNextSibling(child); } finally { comRelease(child); } child = next; } return false; };
   return maxDepth >= 1 && down(root,1);
 }
-function uiaWindowTargetSet(filter) { return new Set(windowRecords(filter ?? {}).map((window) => window.wid.toLowerCase())); }
+
 function matchesUiaRelation(element, direction, spec) {
   const relation = relationSpec(spec, "a11y"); if (!relation) return false;
-  if (relation.domain === "window") { const targets = uiaWindowTargetSet(relation.filter); return !!targets.size && uiaWalk(element, direction, relation.depth, (e) => { const wid = uiaNativeWid(e); return !!wid && targets.has(wid.toLowerCase()); }); }
+  if (relation.domain === "window") {
+    const targets = new Set(windowRecords(relation.filter ?? {}).map((window) => window.wid.toLowerCase()));
+    return !!targets.size && uiaWalk(element, direction, relation.depth, (e) => { const wid = uiaNativeWid(e); return !!wid && targets.has(wid.toLowerCase()); });
+  }
   return uiaWalk(element, direction, relation.depth, (e) => { const record = uiaRecord(e); return matchesUia(e, record, relation.filter); });
 }
 function matchesUia(element, record, filter) {
-  filter = normalizeUiaFilter(filter); return matchesUiaOwn(record, filter) && (filter.up == null || matchesUiaRelation(element, "up", filter.up)) && (filter.down == null || matchesUiaRelation(element, "down", filter.down));
+  filter = normalizeUiaFilter(filter);
+  return matchesFields(record, filter, A11Y_FIELDS) && (filter.up == null || matchesUiaRelation(element, "up", filter.up)) && (filter.down == null || matchesUiaRelation(element, "down", filter.down));
 }
 function matchesWindowUiaRelation(window, direction, relation) {
   return !!comUse(uiaElementFromHandle(asPointer(window.wid)), (root) => uiaWalk(root, direction, relation.depth, (e) => { const record = uiaRecord(e); return matchesUia(e, record, relation.filter); }));
@@ -862,9 +870,17 @@ export function a11y_find({a11y={},limit=0}={}) {
   if (own(filter,"wid") && filter.wid!=null && !Array.isArray(filter.wid)) { const record=comUse(uiaElementFromHandle(asPointer(filter.wid)),e=>{ const value=uiaRecord(e); return matchesUia(e,value,filter)?value:null; }); return record?[record]:[]; }
   const up=filter.up==null?null:relationSpec(filter.up,"a11y"); if (up?.domain==="window") for (const window of windowRecords(up.filter)) { collect(uiaElementFromHandle(asPointer(window.wid)),up.depth); if (found.length>=max) break; } else collect(uiaRootElement(),Infinity); return found;
 }
-function uiaRetain(element) { comCall(element,1,"u32"); return element; }
+
 function uiaFindFromRoot(root, filter, depth = Infinity) {
-  let found = null; uiaWalk(root,"down",depth,(element) => { const record = uiaRecord(element); if (!matchesUia(element,record,filter)) return false; found = uiaRetain(element); return true; }); return found;
+  let found = null;
+  uiaWalk(root, "down", depth, (element) => {
+    const record = uiaRecord(element);
+    if (!matchesUia(element, record, filter)) return false;
+    comCall(element, 1, "u32");
+    found = element;
+    return true;
+  });
+  return found;
 }
 function uiaResolve(filter = {}) {
   filter = normalizeUiaFilter(filter);

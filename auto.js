@@ -3056,13 +3056,13 @@ function applyStateOps(root, ops) {
       if (!Array.isArray(parent[leaf])) {
         scenarioFail("state target is not an array", { path: path.join(".") });
       }
-      parent[leaf].push(structuredClone(value));
+      parent[leaf].push(value);
     } else if (op === "object") {
       if (
         !own(parent, leaf) || !parent[leaf] ||
         typeof parent[leaf] !== "object" || Array.isArray(parent[leaf])
       ) parent[leaf] = Object.create(null);
-    } else parent[leaf] = structuredClone(value);
+    } else parent[leaf] = value;
   }
 }
 
@@ -3133,7 +3133,7 @@ export async function run(actions = []) {
             if (parent) delete parent[path.at(-1)];
           }
           context.state = next;
-          result = structuredClone(next);
+          result = next;
         } else {
           if (
             name !== "screenshot" && name !== "screenshot_save" &&
@@ -3144,10 +3144,13 @@ export async function run(actions = []) {
             result = await scenarioScreenshot(input, resources);
           } else if (name === "screenshot_save") {
             result = await scenarioScreenshotSave(input, resources);
-          } else if (name === "input_reset") result = releaseInput(held);
-          else {result = await ACTIONS[name](
+          } else if (name === "input_reset") {
+            result = releaseInput(held);
+          } else {
+            result = await ACTIONS[name](
               resolveActionResources(name, input, resources),
-            );}
+            );
+          }
           if (result == null) result = { error: "no result", action: name };
         }
       } catch (error) {

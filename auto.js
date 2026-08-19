@@ -12,23 +12,25 @@ if (!backendPath) {
 
 const backend = await import(backendPath);
 
-export const display_find = backend.display_find;
-export const window_find = backend.window_find;
-export const window_control = backend.window_control;
-export const window_get_prop = backend.window_get_prop;
-export const window_set_prop = backend.window_set_prop;
-export const window_hit = backend.window_hit;
-export const window_wait = backend.window_wait;
-export const a11y_find = backend.a11y_find;
-export const a11y_action = backend.a11y_action;
-export const keyb = backend.keyb;
-export const input_sel = backend.input_sel;
-export const mouse_move = backend.mouse_move;
-export const mouse_button = backend.mouse_button;
-export const input_reset = backend.input_reset;
-export const clipboard = backend.clipboard;
-export const wait = backend.wait;
-export const system = backend.system;
+export const {
+  display_find,
+  window_find,
+  window_control,
+  window_get_prop,
+  window_set_prop,
+  window_hit,
+  window_wait,
+  a11y_find,
+  a11y_action,
+  keyb,
+  input_sel,
+  mouse_move,
+  mouse_button,
+  input_reset,
+  clipboard,
+  wait,
+  system,
+} = backend;
 
 function own(object, key) {
   return Object.prototype.hasOwnProperty.call(object, key);

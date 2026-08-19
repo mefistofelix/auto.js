@@ -13,7 +13,7 @@ Keep the library itself in one file:
 - `auto.js` — complete library implementation.
 - `examples/` — executable end-to-end examples/tests.
 - `AGENTS.md` — project rules and architectural notes.
-- `SPEC.md` — authoritative user-facing, language-agnostic Automation Action Format (AAF) specification.
+- `AAF_SPEC.md` — authoritative user-facing, language-agnostic Automation Action Format (AAF) specification.
 
 Do not split `auto.js` into internal modules merely for organization. Minimal distribution is a project goal.
 

@@ -78,7 +78,7 @@ The same primitives can be represented as JSON/YAML-compatible actions and execu
       window: { wid: "$.state.target.wid" }
 ```
 
-See [`SPEC.md`](SPEC.md) for the complete AAF specification.
+See [`AAF_SPEC.md`](AAF_SPEC.md) for the complete AAF specification.
 
 ## Verification suite
 
@@ -96,8 +96,7 @@ deno run -A examples/suite.js
 
 ```text
 auto.js               complete library implementation
-SPEC.md                authoritative AAF specification
-AAF_SPEC.md            publish-friendly copy of the AAF specification
+AAF_SPEC.md            authoritative AAF specification
 examples/suite.js      self-contained regression suite
 examples/notepad.js    real-application integration example
 AGENTS.md              implementation and project rules

@@ -130,15 +130,15 @@ function isChildWindow(hwnd) { return !!(user32.symbols.GetWindowLongW(hwnd, GWL
 function windowParent(hwnd) { return isChildWindow(hwnd) ? user32.symbols.GetAncestor(hwnd, GA_PARENT) : null; }
 function windowOwner(hwnd) { return isChildWindow(hwnd) ? null : user32.symbols.GetWindow(hwnd, GW_OWNER); }
 function windowZOrder(hwnd) {
-  let zorder = 0, current = hwnd; const seen = new Set([ptrId(hwnd).toLowerCase()]);
-  while (zorder < 10000 && (current = user32.symbols.GetWindow(current, GW_HWNDPREV))) { const id = ptrId(current).toLowerCase(); if (seen.has(id)) break; seen.add(id); zorder++; }
+  let zorder = 0;
+  while ((hwnd = user32.symbols.GetWindow(hwnd, GW_HWNDPREV))) zorder++;
   return zorder;
 }
 function windowDepth(hwnd) {
-  let depth = 0, current = hwnd; const seen = new Set();
-  while (current && isChildWindow(current) && depth < 256) {
-    const parent = user32.symbols.GetAncestor(current, GA_PARENT), id = parent && ptrId(parent).toLowerCase();
-    if (!parent || seen.has(id)) break; seen.add(id); current = parent; depth++;
+  let depth = 0;
+  while (hwnd && isChildWindow(hwnd)) {
+    hwnd = user32.symbols.GetAncestor(hwnd, GA_PARENT);
+    if (hwnd) depth++;
   }
   return depth;
 }
@@ -201,11 +201,21 @@ function matchesWindowRelation(window, direction, spec, tree) {
 function matchesWindow(w,filter,tree) { return matchesFields(w,filter,WINDOW_FIELDS) && (filter.up == null || matchesWindowRelation(w,"up",filter.up,tree)) && (filter.down == null || matchesWindowRelation(w,"down",filter.down,tree)); }
 function deepWindowFilter(filter) { return filter.wid != null || own(filter, "wpid") || filter.depth != null || filter.up != null || filter.down != null; }
 function enumWindowHandles(parents) {
-  const found = [], seen = new Set(), top = parents == null, callback = new Deno.UnsafeCallback({ parameters:["pointer","pointer"], result:"i32" }, hwnd => {
-    if (top && isChildWindow(hwnd)) return 1; const id = ptrId(hwnd).toLowerCase(); if (!seen.has(id)) { seen.add(id); found.push(hwnd); } return 1;
+  const found = [], top = parents == null;
+  const callback = new Deno.UnsafeCallback({ parameters:["pointer","pointer"], result:"i32" }, hwnd => {
+    if (!top || !isChildWindow(hwnd)) found.push(hwnd);
+    return 1;
   });
-  try { if (top) { if (!user32.symbols.EnumWindows(callback.pointer,null)) throw new Error("EnumWindows failed"); } else for (const hwnd of parents) user32.symbols.EnumChildWindows(hwnd,callback.pointer,null); }
-  finally { callback.close(); } return found;
+  try {
+    if (top) {
+      if (!user32.symbols.EnumWindows(callback.pointer, null)) throw new Error("EnumWindows failed");
+    } else {
+      for (const hwnd of parents) user32.symbols.EnumChildWindows(hwnd, callback.pointer, null);
+    }
+  } finally {
+    callback.close();
+  }
+  return found;
 }
 function windowRecords(filter = {}) {
   filter = normalizeWindowFilter(filter); const top = enumWindowHandles(), handles = deepWindowFilter(filter) ? [...top,...enumWindowHandles(top)] : top, monitors = displayMap();

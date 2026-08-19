@@ -492,3 +492,12 @@ export async function run(actions = []) {
     resources.clear();
   }
 }
+
+if (import.meta.main) {
+  if (Deno.args.length !== 1) {
+    throw new Error("usage: deno run -A auto.js <scenario.yaml>");
+  }
+  const { parse } = await import("jsr:" + "@std/yaml@1.2.0");
+  const actions = parse(await Deno.readTextFile(Deno.args[0]));
+  console.log(JSON.stringify(await run(actions), null, 2));
+}

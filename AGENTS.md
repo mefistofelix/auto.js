@@ -12,17 +12,21 @@ AppKit, Vision and IOKit; Linux uses AT-SPI and, under X11,
 Xlib/EWMH/XRandR/XTest. Sharp (`npm:sharp`) is the only always-loaded
 external/native dependency and is used only for image encode/decode.
 Tesseract.js (`npm:tesseract.js`) is the one approved optional lazy dependency
-and belongs only to the common OCR provider policy in `auto.js`. Do not
-introduce C, C++, Rust, another native addon, a project-owned library, generated
-bindings, other npm dependencies, or a build step unless the project direction
-is explicitly changed.
+and belongs only to the common OCR provider policy in `auto.js`. Direct CLI use
+may lazily load Deno's `jsr:@std/yaml` parser; it is CLI-only and must not become
+part of normal library initialization. Do not introduce C, C++, Rust, another
+native addon, a project-owned library, generated bindings, other npm
+dependencies, or a build step unless the project direction is explicitly
+changed.
 
 ## Repository shape
 
 Keep the runtime split flat and explicit:
 
 - `auto.js` — common public entry point, backend selection, AAF
-  scenario/state/resource logic, and shared image-codec boundary.
+  scenario/state/resource logic, shared image-codec boundary, and minimal
+  `import.meta.main` YAML CLI. The CLI accepts exactly one file and delegates to
+  `run()`; do not create a separate CLI layer or command framework.
 - `auto_win.js` — Windows backend.
 - `auto_darwin.js` — macOS backend.
 - `auto_linux.js` — Linux backend; AT-SPI is common, with X11/Wayland capability

@@ -12,7 +12,8 @@ project-owned native library and no build step.
 
 AutoJS exposes both direct JavaScript functions and **AAF — Automation Action
 Format**, a small JSON/YAML-friendly action model for serialized desktop
-automation scenarios.
+automation scenarios. The same `auto.js` file is also executable directly as a
+minimal CLI for YAML scenarios.
 
 ## Features
 
@@ -45,7 +46,8 @@ automation scenarios.
   surface
 - Deno
 - network access on first resolution of `npm:sharp`; Tesseract OCR also needs
-  first-use package/language-data resolution
+  first-use package/language-data resolution; direct CLI use resolves Deno's
+  `@std/yaml` parser on first use
 
 Run scripts with permissions sufficient for FFI, process creation, desktop
 input, and file access:
@@ -104,6 +106,16 @@ action; `state` is the final scenario state. Images deliberately retained in
 that final state are returned to JavaScript as compact lossless PNG resource
 objects (`{format, rect, grayscale, data}`) instead of dead run-scoped handle
 strings; direct `ocr({image})` can consume them again.
+
+The same file can execute that YAML directly:
+
+```text
+deno run -A auto.js scenario.yaml
+```
+
+There are no CLI commands or flags: exactly one YAML file is parsed and passed
+to `run()`, whose result is written as JSON to stdout. Importing `auto.js` as a
+library does not enter the CLI path or load the YAML parser.
 
 See [`AAF_SPEC.md`](AAF_SPEC.md) for the complete AAF specification.
 

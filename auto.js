@@ -323,13 +323,10 @@ export function display_find({ display } = {}) {
 
 function resolveDisplay(display) {
   const list = displayRecords();
-  if (!list.length) throw new Error("No displays found");
+  if (!list.length) return null;
   if (display == null) return list[0];
   const index = Number(typeof display === "object" ? display.index : display);
-  if (!Number.isInteger(index) || !list[index]) {
-    throw new Error(`Display ${display} not found`);
-  }
-  return list[index];
+  return Number.isInteger(index) ? list[index] ?? null : null;
 }
 
 function displayMap() {
@@ -517,7 +514,10 @@ const WINDOW_FIELDS = {
   title: [false, regexFilter],
   bin: [false, regexFilter],
   class: [false, regexFilter],
-  display: [false, (a, b) => anyFilter(b, (v) => a === tryDisplay(v)?.index)],
+  display: [
+    false,
+    (a, b) => anyFilter(b, (v) => a === resolveDisplay(v)?.index),
+  ],
   status: [false, filterString],
   hidden: [false, filterBool],
   foreground: [false, filterBool],
@@ -1086,7 +1086,7 @@ function captureArea(options = {}) {
       bottom = Math.max(...displays.map((d) => d.y + d.height));
     return { kind: "screen", x, y, width: right - x, height: bottom - y };
   }
-  const display = tryDisplay(options.display);
+  const display = resolveDisplay(options.display);
   return display
     ? {
       kind: "screen",
@@ -1220,21 +1220,14 @@ function mouseInput(flags, data = 0) {
   }, "mouse");
 }
 
-function tryDisplay(value) {
-  try {
-    return resolveDisplay(value);
-  } catch {
-    return null;
-  }
-}
-
 function geometryContext(info, display) {
-  const explicitDisplay = display == null ? null : tryDisplay(display);
+  const explicitDisplay = display == null ? null : resolveDisplay(display);
   return {
     window: info?.rect ?? null,
     client: info ? clientRect(asPointer(info.wid)) : null,
     display: explicitDisplay ??
-      (info?.display != null ? tryDisplay(info.display) : null) ?? tryDisplay(),
+      (info?.display != null ? resolveDisplay(info.display) : null) ??
+      resolveDisplay(),
     explicitDisplay,
   };
 }

@@ -2,7 +2,7 @@
 
 AAF is a small declarative format for desktop automation. A scenario is an ordered array of actions that can be represented as YAML, JSON, or any equivalent object/array structure.
 
-## 1. Quick start: automate Notepad
+# 1. Quick start: automate Notepad
 
 This scenario finds a Notepad window, remembers it, focuses it, types text, captures its client area, keeps the image in scenario state, saves it to disk, and waits until OCR can see the typed text.
 
@@ -105,66 +105,73 @@ Typical results are deliberately plain and reusable:
 
 ---
 
-## 2. Action reference
+# 2. Action reference
 
-Every scenario action is an object with exactly one command key.
+Every scenario action is an object with exactly one command key. The reference is ordered by domain rather than by implementation history.
 
-### Command index
+## Command index
 
-**Discovery and inspection**
+**Display**
 
-- `display_find` — find displays.
-- `window_find` — find native windows.
-- `window_get` — get one native window, optionally including its control text.
-- `a11y_find` — find accessibility elements.
+- [`display_find`](#display_find) — enumerate or select displays.
+
+**Windows**
+
+- [`window_find`](#window_find) — find native windows.
+- [`window_get`](#window_get) — get one native window, optionally including live control text.
+- [`window_control`](#window_control) — focus, move, resize, minimize, maximize, restore, or close a window.
+- [`window_set`](#window_set) — change supported window properties.
+- [`window_hit`](#window_hit) — resolve the native window under a point.
+
+**Accessibility and visual debugging**
+
+- [`a11y_find`](#a11y_find) — find accessibility elements.
+- [`highlight`](#highlight) — draw a temporary outline around a window or accessibility element.
+
+**Mouse**
+
+- [`mouse_move`](#mouse_move) — move the physical pointer.
+- [`mouse_button`](#mouse_button) — click, hold, release, or scroll.
+
+**Keyboard and clipboard**
+
+- [`keyb`](#keyb) — press keys or type Unicode text.
+- [`clipboard`](#clipboard) — read, write, or clear clipboard text.
+
+**Images and recognition**
+
+- [`screenshot`](#screenshot) — capture a new run-scoped image resource.
+- [`screenshot_save`](#screenshot_save) — save an existing retained image resource.
+- [`ocr`](#ocr) — recognize text from a capture source or image resource.
+
+**Synchronization**
+
+- [`wait`](#wait) — delay or poll a condition.
 
 **System and session**
 
-- `system` — inspect lock state, reset idle timers, or keep the system/display awake.
+- [`system`](#system) — inspect lock state, reset idle timers, or keep the system/display awake.
 
-**Window operations and debugging**
+---
 
-- `window_control` — focus, move, resize, minimize, maximize, restore, or close a window.
-- `window_set` — change simple window properties.
-- `window_hit` — resolve the native window under a point.
-- `highlight` — draw a temporary outline around a window or accessibility element.
+## `display_find`
 
-**Input and clipboard**
+*Enumerate displays or select one by display index.*
 
-- `mouse_move` — move the pointer.
-- `mouse_button` — click, hold, release, or scroll.
-- `keyb` — press keys or type Unicode text.
-- `clipboard` — read, write, or clear clipboard text.
+**Action input**
 
-**Images and synchronization**
-
-- `screenshot` — capture a new image resource, optionally saving it immediately.
-- `screenshot_save` — save an existing retained image resource.
-- `ocr` — recognize text from a capture source or image resource.
-- `wait` — delay or poll a condition.
-
-**Scenario helper**
-
-- `state` — mutate temporary scenario state.
-
-### Discovery and inspection
-
-#### `display_find`
-
-Find displays.
+- `display` — optional display selector. The canonical display selector is described in [Displays](#displays). Omit it to return all displays.
 
 ```yaml
 - display_find: {}
-```
 
-**Optional target**
-
-```yaml
 - display_find:
     display: { index: 0 }
 ```
 
-**Output:** an array of display records.
+**Action output**
+
+An array of display records. A valid selector with no match returns `[]`.
 
 ```yaml
 - index: 0
@@ -174,9 +181,16 @@ Find displays.
   work: { width: 1920, height: 1140 }
 ```
 
-#### `window_find`
+---
 
-Find native windows matching a `window` filter.
+## `window_find`
+
+*Find native windows matching a reusable window filter.*
+
+**Action input**
+
+- `window` — [window filter](#window-filters) selecting the windows to return.
+- `limit` — maximum number of results. `0` or omission means no limit; a positive integer stops after that many matches.
 
 ```yaml
 - window_find:
@@ -186,88 +200,46 @@ Find native windows matching a `window` filter.
     limit: 1                              # 0 or omitted = no limit
 ```
 
-**Fields:**
+**Action output**
 
-- `window` — common window filter described in [Window filters](#window-filters).
-- `limit` — maximum number of results. `0` or omitted means no limit.
+An array of window records. A valid search with no matches returns `[]`.
 
-**Output:** array of window records; `[]` when nothing matches.
+---
 
-#### `window_get`
+## `window_get`
 
-Get the first native window matching a `window` filter.
+*Get the first native window matching a filter, with optional live native text retrieval.*
+
+**Action input**
+
+- `window` — [window filter](#window-filters) selecting the target.
+- `text` — when `true`, also query the target's live text/content rather than relying only on the normal enumerated `title` field.
 
 ```yaml
 - window_get:
     window: { class: "^Edit$" }
-    text: true # query the live window/control text
+    text: true # query live control text
 ```
 
-**Fields:**
+**Action output**
 
-- `window` — common window filter described in [Window filters](#window-filters).
-- `text` — when `true`, also query the target's live text/content.
+One window record or `null`. With `text: true`, the record also contains `text`, which is a string when the native control supports safe text retrieval or `null` otherwise. On Windows this uses bounded `WM_GETTEXT`, so standard cross-process Edit, Static, Button, and similar control contents can be read even when `GetWindowText` is insufficient.
 
-**Output:** one window record or `null`. With `text: true`, the record also contains `text`, which is a string when the native control supports text retrieval or `null` when it cannot be retrieved. `text` is distinct from the normal `title` field: on Windows it uses bounded `WM_GETTEXT`, so it can read cross-process Edit, Static, Button, and similar controls that `GetWindowText` cannot read reliably.
+---
 
-#### `a11y_find`
+## `window_control`
 
-Find elements in the platform accessibility tree.
+*Perform an operational action on one native window.*
 
-```yaml
-- a11y_find:
-    a11y:
-      type: button
-      name: ["^Save$", "^OK$"]
-      up:
-        depth: all
-        window:
-          bin: "notepad\\.exe$"
-    limit: 10                             # stop after 10 matches
-```
+**Action input**
 
-**Fields:**
+- `window` — [window filter](#window-filters) selecting the target.
+- `action` — one of `restore | minimize | maximize | focus | move | size | close`.
+- `pos` — optional [position](#position-and-rectangle) used by `move` / `size`.
+- `rect` — optional [rectangle](#position-and-rectangle) used by `move` / `size`.
+- `display` — optional [display](#displays) context for geometry resolution.
 
-- `a11y` — common accessibility filter described in [Accessibility filters](#accessibility-filters).
-- `limit` — maximum number of results. `0` or omitted means no limit.
-
-**Output:** array of accessibility records; `[]` when nothing matches.
-
-### System and session
-
-#### `system`
-
-Inspect or influence the current desktop session's idle/power state.
-
-```yaml
-- system: {}              # -> { locked: false }
-
-- system:
-    wake: true            # one-shot reset of system + display idle timers
-
-- system:
-    awake: true           # continuously prevent sleep/display-off
-
-- system:
-    awake: false          # clear the continuous request
-```
-
-`wake` and `awake` are mutually exclusive. With neither field, `system` is a pure query.
-
-**Fields:**
-
-- `wake: true` — make a one-shot activity request for both system and display. It can wake an idle/off display while the process is running, but cannot resume a machine that is already suspended because no action executes during suspension.
-- `awake: boolean` — enable or clear a continuous keep-awake request. A caller that enables it is responsible for later clearing it.
-
-**Output:** `{locked}` for a query, plus `wake: true` or `awake: boolean` for a successful operation. `locked` is `true`, `false`, or `null` if the backend cannot determine the session state. Invalid combinations or failed operations return `null`.
-
-On Windows, lock state comes from the current `WTSSessionInfoEx` session state. Wake/awake use the native execution-state API; they do not unlock an authenticated lock screen.
-
-### Window operations and debugging
-
-#### `window_control`
-
-Perform an operational window action.
+`move` and `size` are exact aliases: both apply the supplied `pos` and/or `rect` in one geometry update.
 
 ```yaml
 - window_control:
@@ -275,21 +247,27 @@ Perform an operational window action.
     action: maximize
 ```
 
-**Fields**
+**Action output**
 
-- `window` — window filter selecting the target.
-- `action` — one of `restore | minimize | maximize | focus | move | size | close`.
-- `pos` — optional position for `move` / `size`.
-- `rect` — optional rectangle/size for `move` / `size`.
-- `display` — optional display context for geometry.
+The current window record after the operation, or `null` when no target can be resolved.
 
-`move` and `size` are exact aliases: both apply the supplied `pos` and/or `rect` in one geometry update.
+---
 
-**Output:** current window record after the operation, or `null`.
+## `window_set`
 
-#### `window_set`
+*Apply supported best-effort properties to one native window.*
 
-Apply simple best-effort window properties.
+**Action input**
+
+- `window` — [window filter](#window-filters) selecting the target.
+- `title` — new caption/title when the backend supports changing it.
+- `frame` — `none | border | caption | resizable`.
+- `topmost` — boolean topmost state.
+- `opacity` — number from `0` to `1`.
+- `enabled` — boolean enabled/input state.
+- `highlight` — `true` or an AAF [time value](#time-values); draws a temporary outline after applying the other fields.
+
+There is no generic `class` setter. Native class/control identity is not generally an instance property that can be truthfully renamed across backends.
 
 ```yaml
 - window_set:
@@ -302,23 +280,21 @@ Apply simple best-effort window properties.
     highlight: 800ms
 ```
 
-**Fields**
+**Action output**
 
-- `window` — window filter selecting the target.
-- `title` — caption/title when supported.
-- `frame` — `none | border | caption | resizable`.
-- `topmost` — boolean.
-- `opacity` — number from `0` to `1`.
-- `enabled` — boolean.
-- `highlight` — `true` or an AAF duration; highlights after applying the other fields.
+The current window record after applying the requested properties, or `null` when no target can be resolved.
 
-There is no generic `class` setter. Native class/control identity is not generally an instance property that can be truthfully renamed across backends.
+---
 
-**Output:** current window record, or `null`.
+## `window_hit`
 
-#### `window_hit`
+*Resolve the native window at a screen position.*
 
-Return the native window under a screen point.
+**Action input**
+
+- `pos` — [position](#position-and-rectangle) to test.
+- `display` — optional [display](#displays) context used to resolve the position.
+- `child` — when `true`, return the deepest native child available at that point; otherwise return the root native window.
 
 ```yaml
 - window_hit:
@@ -326,17 +302,50 @@ Return the native window under a screen point.
     child: true
 ```
 
-**Fields**
+**Action output**
 
-- `pos` — point to test.
-- `display` — optional display context.
-- `child` — when true, resolve the deepest native child available at that point.
+A window record, or `null` when no native window exists at the resolved point.
 
-**Output:** window record or `null`.
+---
 
-#### `highlight`
+## `a11y_find`
 
-Draw a temporary visual outline around one window or accessibility element without mutating the target.
+*Find elements in the platform accessibility tree.*
+
+**Action input**
+
+- `a11y` — [accessibility filter](#accessibility-filters) selecting elements.
+- `limit` — maximum number of results. `0` or omission means no limit; a positive integer stops traversal after that many matches.
+
+```yaml
+- a11y_find:
+    a11y:
+      type: button
+      name: ["^Save$", "^OK$"]
+      up:
+        depth: all
+        window:
+          bin: "notepad\\.exe$"
+    limit: 10
+```
+
+**Action output**
+
+An array of accessibility records. A valid search with no matches returns `[]`.
+
+---
+
+## `highlight`
+
+*Draw a temporary visual outline without mutating the selected target.*
+
+**Action input**
+
+- `window` — optional [window filter](#window-filters).
+- `a11y` — optional [accessibility filter](#accessibility-filters).
+- `duration` — outline lifetime as an AAF [time value](#time-values); default `800ms`.
+
+Exactly one of `window` or `a11y` must be supplied.
 
 ```yaml
 - highlight:
@@ -346,18 +355,23 @@ Draw a temporary visual outline around one window or accessibility element witho
     duration: 1s
 ```
 
-**Fields**
+**Action output**
 
-- exactly one of `window` or `a11y`.
-- `duration` — default `800ms`.
+`{wid?, uid?, rect}` for the outlined target, or `null` when no target can be resolved.
 
-**Output:** `{wid?, uid?, rect}` or `null`.
+---
 
-### Input and clipboard
+## `mouse_move`
 
-#### `mouse_move`
+*Move the physical pointer to a resolved position.*
 
-Move the physical pointer.
+**Action input**
+
+- `pos` — destination [position](#position-and-rectangle).
+- `window` — optional [window filter](#window-filters) providing a window-relative geometry context.
+- `display` — optional [display](#displays) context.
+- `duration` — optional [time value](#time-values) for interpolated movement.
+- `steps` — optional interpolation granularity used during a non-zero-duration move.
 
 ```yaml
 - mouse_move:
@@ -366,103 +380,95 @@ Move the physical pointer.
     duration: 400ms
 ```
 
-**Fields**
+**Action output**
 
-- `pos` — target point.
-- `window` — optional geometry reference window.
-- `display` — optional display context.
-- `duration` — optional movement duration.
-- `steps` — optional interpolation granularity.
+`{pos}` containing the final resolved screen position, or `null` when the position cannot be resolved.
 
-**Output:** `{pos}` or `null`.
+---
 
-#### `mouse_button`
+## `mouse_button`
 
-Perform one mouse button/wheel operation, optionally repeating `click`.
+*Click, hold, release, or scroll, optionally targeting a native window directly.*
+
+**Action input**
+
+- `click` — click `left | right | middle`.
+- `down` — press and hold `left | right | middle`.
+- `up` — release `left | right | middle`.
+- `wheel` — signed wheel detents; positive scrolls up and negative scrolls down.
+- `window` — optional [window filter](#window-filters). When supported, input is posted directly to that native window instead of moving the physical cursor.
+- `pos` — [position](#position-and-rectangle) for the operation; direct-window mode defaults to `centerWC`.
+- `display` — optional [display](#displays) geometry context.
+- `repeat` — positive integer, default `1`; valid only with `click`.
+- `interval` — [time value](#time-values) between repeated clicks, default `0`.
+
+Exactly one of `click`, `down`, `up`, or `wheel` is allowed.
 
 ```yaml
 - mouse_button:
     click: left
-    repeat: 2        # repeat only applies to click
-    interval: 150ms  # delay between repeated clicks
-```
+    repeat: 2
+    interval: 150ms
 
-```yaml
-- mouse_button:
-    down: left
-
-- mouse_button:
-    up: left
-```
-
-```yaml
 - mouse_button:
     wheel: -3
 ```
 
-**Fields**
+**Action output**
 
-- exactly one of `click`, `down`, `up`, `wheel`.
-- `click/down/up` — `left | right | middle`.
-- `wheel` — signed wheel detents; positive is up, negative is down.
-- `window` — when supported, target that native window directly instead of producing physical pointer input.
-- `pos` — action position; direct window mode defaults to `centerWC`.
-- `display` — optional geometry context.
-- `repeat` — positive integer, default `1`; valid only with `click`.
-- `interval` — delay between repeated clicks, default `0`.
+An object describing the applied operation and resolved `pos`; direct-target mode also includes `wid`.
 
-Output includes the operation and resolved `pos`; direct-target mode also includes `wid`.
+---
 
-#### `keyb`
+## `keyb`
 
-Generate keyboard input.
+*Generate physical-style key operations or layout-independent Unicode typing.*
+
+**Action input**
+
+- `press` — key down+up; a named key, printable character, numeric virtual-key code, or chord array. Printable characters are mapped through the active keyboard layout.
+- `down` — hold one named key or chord.
+- `up` — release one named key or chord.
+- `type` — Unicode text sent directly, independent of keyboard layout.
+- `repeat` — positive integer, default `1`; valid only with `press`.
+- `interval` — [time value](#time-values) between repeated `press` operations, or between characters for `type`; default `0`.
+
+Named keys include letters and digits; Backspace, Tab, Enter, Escape and navigation keys; Caps/Num/Scroll Lock; Print Screen; left/right Shift, Ctrl, Alt and Windows keys; numpad keys; F1–F24; Apps/context-menu; and common browser, volume, media and launch keys. Numeric virtual-key codes remain available for backend-specific cases.
 
 ```yaml
 - keyb:
     press: [ctrl, a]
-```
 
-```yaml
 - keyb:
     press: "@"       # mapped through the active keyboard layout
-```
 
-```yaml
 - keyb:
     press: backspace
     repeat: 3
     interval: 100ms
 
-```yaml
-- keyb:
-    down: ctrl
-- wait: 1s
-- keyb:
-    up: ctrl
-```
-
-```yaml
 - keyb:
     type: "Hello world"
     interval: 30ms
 ```
 
-**Fields**
+**Action output**
 
-- `press` — key down+up; scalar or chord array. Named keys use the canonical key catalog; a single printable character is mapped through the active keyboard layout.
-- `down` — hold one named key or a chord of named keys.
-- `up` — release one named key or a chord of named keys.
-- `type` — Unicode text sent directly, independent of keyboard layout.
-- `repeat` — positive integer, default `1`; valid only with `press`.
-- `interval` — delay between repeated `press` operations, or between characters for `type`; default `0`.
+An object reporting each operation that was applied. Repeated `press` also reports `repeat`; `type` returns `typed` with the number of characters sent.
 
-Output reports the operation that was applied. Repeated `press` also reports `repeat`. For `type`, the result field is `typed` and contains the number of characters sent.
+---
 
-Named keys include letters and digits; Backspace, Tab, Enter, Escape and navigation keys; Caps/Num/Scroll Lock; Print Screen; left/right Shift, Ctrl, Alt and Windows keys; numpad keys; F1–F24; Apps/context-menu; and common browser, volume, media and launch keys. Numeric virtual-key codes remain accepted for backend-specific cases.
+## `clipboard`
 
-#### `clipboard`
+*Read, replace, or clear clipboard text.*
 
-Read, write, or clear clipboard text. Exactly one operation is allowed.
+**Action input**
+
+- `read: true` — read current Unicode clipboard text.
+- `write: text` — replace clipboard text with the supplied value.
+- `clear: true` — clear clipboard contents.
+
+Exactly one operation is allowed.
 
 ```yaml
 - clipboard: { write: "hello" }
@@ -470,17 +476,27 @@ Read, write, or clear clipboard text. Exactly one operation is allowed.
 - clipboard: { clear: true }
 ```
 
-**Fields**
+**Action output**
 
-- `read: true` — return current text.
-- `write: text` — replace clipboard text; returns `{length}`.
-- `clear: true` — clear clipboard; returns `true`.
+- `read` → the current text string.
+- `write` → `{length: N}` with the written text length.
+- `clear` → `true`.
 
-### Images and synchronization
+---
 
-#### `screenshot`
+## `screenshot`
 
-Capture a **new** image resource. Saving it immediately is optional.
+*Capture a new run-scoped image resource; optionally save the same capture immediately.*
+
+**Action input**
+
+- `window` — optional [window filter](#window-filters) selecting a capture window.
+- `display` — optional [display](#displays) capture source/context.
+- `rect` — optional [rectangle](#position-and-rectangle) crop.
+- `all` — when `true`, capture the complete virtual desktop.
+- `grayscale` — when `true`, convert the retained image to grayscale.
+- `save` — optional destination path for immediately saving the newly captured resource.
+- `format` — saved format; currently `png`.
 
 ```yaml
 - screenshot:
@@ -489,53 +505,56 @@ Capture a **new** image resource. Saving it immediately is optional.
       at: centerWC
       width: "80%WC"
       height: "80%WC"
-    grayscale: false
-    save: "capture.png"         # optional; capture still returns an image handle
+    save: "capture.png"
 ```
 
-**Fields**
-
-- `window` — optional capture window.
-- `display` — optional display source/context.
-- `rect` — optional crop.
-- `all` — capture the complete virtual desktop when true.
-- `grayscale` — convert the retained image to grayscale.
-- `save` — optional file path; saves the newly captured resource immediately.
-- `format` — currently `png`.
-
-**Output:**
+**Action output**
 
 ```yaml
-image: "opaque-resource-id"     # never parse or persist across runs
+image: "opaque-resource-id"
 rect: { x: 260, y: 180, width: 900, height: 500 }
 grayscale: false
 path: "capture.png"   # only when save was used
 bytes: 42871           # only when save was used
 ```
 
-`image` is opaque. Scenarios must never inspect its format or derive meaning from it.
+`image` is opaque, run-scoped, and must never be parsed or persisted across runs. Resource lifetime is defined in [Image resources](#image-resources).
 
-#### `screenshot_save`
+---
 
-Save an **existing retained image resource** to disk. It never captures the screen.
+## `screenshot_save`
+
+*Save a retained image resource without recapturing the screen.*
+
+**Action input**
+
+- `image` — opaque image handle retained in scenario state; see [Image resources](#image-resources).
+- `save` — destination path.
+- `format` — saved format; currently `png`.
 
 ```yaml
 - screenshot_save:
-    image: "$.state.shot"       # must still be retained in state
+    image: "$.state.shot"
     save: "later.png"
 ```
 
-**Fields**
+**Action output**
 
-- `image` — opaque image handle retained in scenario state.
-- `save` — destination path.
-- `format` — currently `png`.
+`{image, path, bytes, rect, grayscale}` when the retained resource is available. Inside `run()`, an unavailable/stale resource is reported through the scenario diagnostic result described under [`run()`](#run).
 
-**Output:** `{image, path, bytes, rect, grayscale}`, or `null` when the resource is unavailable.
+---
 
-#### `ocr`
+## `ocr`
 
-Run OCR on a capture source or on an image resource.
+*Recognize text from a fresh capture source or a retained image resource.*
+
+**Action input**
+
+- `image` — optional retained image handle. When supplied, OCR uses that existing resource and does not recapture.
+- `window` — optional [window filter](#window-filters) selecting a fresh capture source when `image` is omitted.
+- `display` — optional [display](#displays) capture source/context when `image` is omitted.
+- `rect` — optional [rectangle](#position-and-rectangle) crop when `image` is omitted.
+- `all` — capture the complete virtual desktop when `image` is omitted.
 
 ```yaml
 - ocr:
@@ -544,56 +563,54 @@ Run OCR on a capture source or on an image resource.
       at: centerWC
       width: "80%WC"
       height: "50%WC"
-```
 
-Or reuse an image resource:
-
-```yaml
 - ocr:
     image: "$.state.shot"
 ```
 
-**Fields**
+**Action output**
 
-- `image` — optional retained image handle.
-- otherwise `window`, `display`, `rect`, `all` describe a fresh capture source.
+`{text, rect}` with recognized text and the image rectangle, or `null` when OCR/capture cannot produce a result outside the scenario diagnostic layer.
 
-**Output:** `{text, rect}` or `null`.
+---
 
-#### `wait`
+## `wait`
 
-Wait for time or poll a condition.
+*Delay for a duration or poll one condition until it matches or times out.*
 
-Fixed delay:
+**Action input**
+
+A scalar number/string is a fixed [time value](#time-values):
 
 ```yaml
 - wait: 500
 - wait: 2s
 ```
 
-Window condition:
+For conditional waits:
+
+- `timeout` — maximum wait duration; default `10s`.
+- `interval` — polling interval; default `100ms`.
+- `not` — invert the condition.
+- `window` — [window filter](#window-filters); succeeds when a matching window exists.
+- `ocr` — OCR condition. `text` is a case-insensitive regex; remaining fields describe the OCR capture source as in [`ocr`](#ocr).
+- `image` — image-template condition. `path` is the PNG template, `similarity` defaults to `0.98`, and the remaining fields describe the screenshot source.
+- `change` — visual-change condition. `percent` is the minimum changed-pixel percentage and the remaining fields describe the screenshot source.
+
+Exactly one of `window`, `ocr`, `image`, or `change` is allowed in a conditional wait.
 
 ```yaml
 - wait:
     timeout: 10s
     interval: 100ms
-    window:
-      title: "Ready"
-```
+    window: { title: "Ready" }
 
-OCR condition:
-
-```yaml
 - wait:
     timeout: 20s
     ocr:
       text: "Ready|Done"
       window: { wid: "$.state.target.wid" }
-```
 
-Image-template condition:
-
-```yaml
 - wait:
     timeout: 10s
     image:
@@ -602,45 +619,38 @@ Image-template condition:
       similarity: 0.98
 ```
 
-Change condition:
+**Action output**
 
-```yaml
-- wait:
-    timeout: 10s
-    change:
-      window: { wid: "$.state.target.wid" }
-      rect:
-        at: centerWC
-        width: "60%WC"
-        height: "40%WC"
-      percent: 5
-```
-
-**Conditional fields**
-
-- `timeout` — default `10s`.
-- `interval` — default `100ms`.
-- `not` — invert the condition.
-- exactly one of `window`, `ocr`, `image`, `change`.
-
-Positive results are returned directly: matched window, `{text, rect}`, `{path, rect, similarity}`, or `{rect, changed, percent, bounds}`. Timeout returns `null`. A satisfied `not: true` returns `true`.
-
-### Scenario helper
-
-#### `state`
-
-Modify temporary scenario state. Its detailed semantics are intentionally described later in [Scenario execution, state, and resources](#5-scenario-execution-state-and-resources).
-
-```yaml
-- state:
-    target: "$.prev[0]"
-```
-
-**Output:** complete resulting state. Inside `run()`, an invalid patch returns a concise diagnostic object such as `{error: "invalid state path", path: "bad path"}`; state and `$.prev` remain unchanged.
+Positive conditions return their concrete result directly: matched window, `{text, rect}`, `{path, rect, similarity}`, or `{rect, changed, percent, bounds}`. Timeout returns `null`; a satisfied `not: true` returns `true`.
 
 ---
 
-## 3. Targets and filters
+## `system`
+
+*Inspect the current session lock state or influence idle/sleep behavior.*
+
+**Action input**
+
+- no fields — pure session-state query.
+- `wake: true` — make a one-shot activity request for both system and display. It can wake an idle/off display while code is running, but cannot resume a machine that is already suspended.
+- `awake: boolean` — enable or clear a continuous keep-awake request. A caller that enables it is responsible for later clearing it.
+
+`wake` and `awake` are mutually exclusive.
+
+```yaml
+- system: {}              # query
+- system: { wake: true }  # one-shot activity request
+- system: { awake: true }
+- system: { awake: false }
+```
+
+**Action output**
+
+`{locked}` for a query, plus `wake: true` or `awake: boolean` for a successful operation. `locked` is `true`, `false`, or `null` when the backend cannot determine the session state. On Windows, wake/awake use the native execution-state API and never unlock an authenticated lock screen.
+
+---
+
+# 3. Targets and filters
 
 AAF separates two target domains:
 
@@ -651,7 +661,7 @@ a11y     elements exposed by the platform accessibility tree
 
 They are distinct trees. `up` and `down` can traverse one tree or explicitly bridge to the other.
 
-### General filter rule
+## General filter rule
 
 Different fields are **ANDed**. Fields documented as scalar-or-array use **OR** inside the array.
 
@@ -672,7 +682,7 @@ AND (pid=1200 OR pid=1300)
 
 An empty array matches nothing.
 
-### Window filters
+## Window filters
 
 ```yaml
 window:
@@ -730,7 +740,7 @@ hidden: false
 foreground: true
 ```
 
-### Accessibility filters
+## Accessibility filters
 
 `a11y` is platform-neutral. The current Windows backend maps it to Windows UI Automation; macOS can map it to AX, and Linux to AT-SPI.
 
@@ -786,7 +796,7 @@ focusable: false
 offscreen: false
 ```
 
-### `up` / `down`
+## `up` / `down`
 
 Same-domain window relation:
 
@@ -836,9 +846,9 @@ The outer command decides the result domain. `window_find` always returns window
 
 ---
 
-## 4. Geometry and time
+# 4. Geometry and time
 
-### Displays
+## Displays
 
 A display target is:
 
@@ -848,7 +858,7 @@ display: { index: 0 }
 
 Display index `0` is the primary display.
 
-### Position and rectangle
+## Position and rectangle
 
 AAF uses only two geometry objects:
 
@@ -899,7 +909,7 @@ If a window target exists, the implicit reference is `W`; otherwise it is `D`. E
 
 For a window geometry update, `rect` is resolved first and `pos` then repositions the resulting rectangle without changing its resolved size.
 
-### Time values
+## Time values
 
 One grammar is used everywhere:
 
@@ -914,11 +924,11 @@ Numbers are milliseconds. String time values require `ms`, `s`, or `m`.
 
 ---
 
-## 5. Scenario execution, state, and resources
+# 5. Scenario execution, state, and resources
 
 The automation primitives themselves remain stateless: each action resolves its own targets and arguments. `run()` adds only a small temporary scenario context.
 
-### `run()`
+## run()
 
 `run([...])` executes actions sequentially and returns one result per action in the same order.
 
@@ -948,7 +958,7 @@ Typical diagnostics are intentionally compact:
 
 A new run starts with an empty state and no resources.
 
-### `$.prev` and `$.state`
+## `$.prev` and `$.state`
 
 During one run:
 
@@ -961,7 +971,7 @@ Every action may read both. Only `state` may modify `$.state`.
 
 `state` does not replace `$.prev`, so multiple consecutive state patches may all read the same previous action result.
 
-### Typed references
+## Typed references
 
 A string made entirely of a `$.…` path is replaced by the actual referenced value and preserves its type:
 
@@ -982,7 +992,7 @@ $.state.items[2].name
 
 Indexes are zero-based. A missing path invalidates the step instead of silently becoming a `null` argument. `run()` returns `{error: "unresolved reference", path: "$.…"}` for that step.
 
-### Text interpolation
+## Text interpolation
 
 Use `<<…>>` inside a larger string:
 
@@ -1007,9 +1017,19 @@ $.state.x          full typed replacement
 <<$.state.x|re>>   regex-escaped interpolation
 ```
 
-### State patches
+## `state`
 
-`state` applies one atomic hierarchical patch.
+*Apply one atomic hierarchical patch to the current scenario state.*
+
+**Action input**
+
+Every normal key is a state path assignment. Nested objects and dotted paths are equivalent.
+
+- `path: value` — assign the resolved value at `path`. Missing intermediate objects are created; a non-object intermediate value is replaced with an object when a deeper path must be written.
+- `&path: value` — append one resolved value as a single item to an array. A missing target leaf becomes `[]`; an existing non-array leaf makes the whole patch fail atomically.
+- `"-": [paths...]` — delete the listed state paths after assignments and pushes. Missing delete targets are harmless.
+
+State paths use the canonical dotted state-path grammar. Values may use [typed references](#typed-references) or [text interpolation](#text-interpolation). Every reference in one `state` action is resolved against the **pre-patch** context, so writes in the same patch cannot observe each other.
 
 ```yaml
 - state:
@@ -1017,35 +1037,19 @@ $.state.x          full typed replacement
       wid: "$.prev[0].wid"
       pid: "$.prev[0].pid"
     "target.title": "$.prev[0].title"
-```
-
-Nested maps and dotted paths are equivalent. Missing intermediate objects are autovivified. If an intermediate value is not an object, it is replaced with an object so the requested deeper path can be written.
-
-Push one item to an array with `&path`:
-
-```yaml
-- state:
-    "&history": "$.prev[0]"   # &path appends one item to an array
-    "&events":
-      type: found
-      wid: "$.prev[0].wid"
-```
-
-If the target leaf does not exist it becomes `[]`. If it exists and is not an array, the entire patch fails atomically.
-
-Delete paths with the reserved `"-"` key:
-
-```yaml
-- state:
-    "-":                        # delete after writes/pushes
+    "&history": "$.prev[0]"
+    "-":
       - temporary
       - target.pid
-      - "<<$.state.path_to_remove>>"
 ```
 
-All references in one state action are resolved against the pre-patch context. Assignments and pushes apply first; deletions apply second, so deletion wins on conflicts.
+Assignments and pushes apply first; deletions apply second, so deletion wins on conflicts.
 
-### Image resources
+**Action output**
+
+The complete resulting `$.state`. A failed `state` action returns a concise scenario diagnostic, changes neither state nor `$.prev`, and never partially applies a patch.
+
+## Image resources
 
 Some data is too large or implementation-specific to place directly in JSON state. AAF represents it with opaque run-scoped resource handles.
 
@@ -1076,7 +1080,7 @@ All remaining resources are released when the run ends. Resource handles are nev
 
 ---
 
-## 6. Portability and backend capabilities
+# 6. Portability and backend capabilities
 
 AAF is a platform-agnostic model. A backend implements the capabilities that its operating system and security model actually expose.
 
@@ -1093,7 +1097,7 @@ The common structure is portable:
 
 Unavailable backend properties are optional capabilities. They must not be imitated with misleading semantics. A filter requiring an unavailable property does not match; an unsupported mutation follows normal best-effort behavior.
 
-### Windows
+## Windows
 
 The current implementation is Windows x64 and is presently the richest backend:
 
@@ -1103,7 +1107,7 @@ The current implementation is Windows x64 and is presently the richest backend:
 - physical input is supported; some mouse input can also be directed to a specific HWND.
 - `window_set` can use native caption, frame/style, topmost, opacity, and enabled state.
 
-### macOS
+## macOS
 
 The same model can map to:
 
@@ -1113,7 +1117,7 @@ The same model can map to:
 
 The native window tree is generally less expressive than the Windows HWND tree, so more structural information may naturally live under `a11y`. The AAF grammar does not need to change.
 
-### Linux
+## Linux
 
 On X11, `window` maps naturally to the X Window hierarchy and window-manager properties, while `a11y` can map to AT-SPI.
 
@@ -1123,7 +1127,7 @@ Windows, macOS, and Linux therefore do not need identical native fields. AAF kee
 
 ---
 
-## 7. Design principles
+# 7. Design principles
 
 AAF intentionally keeps a small set of stable rules:
 

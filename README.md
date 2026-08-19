@@ -107,15 +107,25 @@ that final state are returned to JavaScript as compact lossless PNG resource
 objects (`{format, rect, grayscale, data}`) instead of dead run-scoped handle
 strings; direct `ocr({image})` can consume them again.
 
-The same file can execute that YAML directly:
+The same `auto.js` file can execute a scenario directly from YAML. For example,
+open a blank Notepad window and run the included CLI example:
+
+```text
+deno run -A auto.js examples/notepad.yaml
+```
+
+`examples/notepad.yaml` finds the Notepad window, stores it in scenario state,
+focuses it, types text, waits for OCR to observe that text, and saves
+`notepad-cli.png`. Use the same form with any other AAF YAML file:
 
 ```text
 deno run -A auto.js scenario.yaml
 ```
 
 There are no CLI commands or flags: exactly one YAML file is parsed and passed
-to `run()`, whose result is written as JSON to stdout. Importing `auto.js` as a
-library does not enter the CLI path or load the YAML parser.
+to `run()`, whose `{results, state}` value is written as JSON to stdout.
+Importing `auto.js` as a library does not enter the CLI path or load the YAML
+parser.
 
 See [`AAF_SPEC.md`](AAF_SPEC.md) for the complete AAF specification.
 
@@ -146,7 +156,8 @@ auto_darwin.js        macOS native backend
 auto_linux.js         Linux native backend
 AAF_SPEC.md            authoritative AAF specification
 examples/suite.js      self-contained regression suite
-examples/notepad.js    real-application integration example
+examples/notepad.js    real-application JavaScript integration example
+examples/notepad.yaml  real-application YAML CLI example
 AGENTS.md              implementation and project rules
 ```
 

@@ -1,0 +1,29 @@
+- window_find:
+    window:
+      bin: "notepad\\.exe$"
+      class: "^Notepad$"
+    limit: 1
+
+- state:
+    target: "$.ret[0]"
+
+- window_control:
+    window: { wid: "$.state.target.wid" }
+    action: focus
+
+- keyb:
+    press: [ctrl, a]
+
+- keyb:
+    type: "Hello from AutoJS CLI\nAAF YAML scenario"
+    interval: 35ms
+
+- wait:
+    timeout: 5s
+    ocr:
+      text: "Hello from AutoJS CLI"
+      window: { wid: "$.state.target.wid" }
+
+- screenshot:
+    window: { wid: "$.state.target.wid" }
+    save: "notepad-cli.png"

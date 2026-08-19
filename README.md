@@ -147,23 +147,43 @@ returns `{results, state}` and transfers final-state image resources to the
 caller.
 
 `auto.js` selects the native backend from `Deno.build.os`. The backend boundary
-stays direct and functional: unsupported operating-system capabilities return no
-result instead of being emulated with misleading semantics.
+stays flat and functional: the same public actions are offered everywhere, but
+unsupported operating-system capabilities return no result instead of being
+emulated with misleading semantics.
 
-The Darwin backend currently maps displays and Quartz windows, AX
-accessibility/actions and window move/size/focus/minimize/restore/close,
-physical mouse and keyboard input, text selection, clipboard, screenshots
-through the legacy Quartz capture API when present, Vision OCR including
-`wait.ocr`, and power wake/awake assertions. macOS has no fake native-child HWND
-tree or direct-window mouse posting here; `WC`, native class/owner fields,
-frame/topmost/opacity mutation, and lock-state detection return unavailable/null
-semantics rather than approximations.
+### Platform backends
 
-The Linux backend keeps AT-SPI common across X11 and Wayland. In an X11 session
-it also maps EWMH/Xlib windows and displays, XTest physical input, X11
-geometry/hit testing, and XGetImage screenshots. In a Wayland session those
-global desktop capabilities remain unavailable instead of treating XWayland as
-the whole desktop; AT-SPI remains usable and `ocr({image})` can use the core
-Tesseract provider. Native Linux OCR currently returns `null`, so
-`provider: default` automatically falls back to Tesseract when a capturable
-image source exists.
+**Windows** is the reference backend and currently the only one covered by the
+full integration suite. Win32 + UI Automation + WinRT provide the richest
+mapping, including HWND hierarchy/owner/client geometry, direct-target mouse,
+full `window_set`, native OCR, all conditional waits, lock state, wake, and
+continuous awake.
+
+**macOS** uses Quartz for windows/displays, AX for accessibility and
+cross-application window operations, CoreGraphics for physical input, AppKit
+pasteboard for clipboard, Vision for OCR, and IOKit for wake/awake. It does not
+fake capabilities without a public equivalent: there is no native child-window
+HWND tree, direct-target mouse posting, reliable foreign-window `WC`, generic
+frame/topmost/opacity/enabled mutation, lock-state query, or current `maximize`
+implementation. Conditional waits currently cover windows and OCR. Screenshot
+uses the legacy Quartz capture symbol when available; if Apple removes it, only
+capture becomes unavailable rather than the whole backend failing to load.
+
+**Linux** stays one backend because AT-SPI is common to X11 and Wayland. Under
+X11, Xlib/EWMH/XRandR/XTest provide windows, displays, geometry, window control,
+physical input and XGetImage screenshots. Clipboard, continuous awake and
+conditional waits beyond windows are not yet mapped. Under Wayland, AutoJS keeps
+AT-SPI but deliberately does not treat XWayland's `DISPLAY` as permission to
+control the whole desktop; global window enumeration/control, capture and input
+injection remain unavailable until implemented through compositor-authorized
+mechanisms.
+
+OCR provider selection is common policy in `auto.js`: `native` delegates to the
+OS backend, `tesseract` lazily imports `npm:tesseract.js`, and `default` falls
+back to Tesseract automatically on Linux because Linux has no universal native
+OCR service comparable to WinRT or Vision. Tesseract needs no manifest,
+`node_modules`, npm install or subprocess, and stores its language cache outside
+the project directory.
+
+See the **Portability and backend capabilities** section of `AAF_SPEC.md` for
+the exact capability matrix and current verification status.

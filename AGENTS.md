@@ -7,14 +7,15 @@ backends per operating system.
 
 The project keeps the common AAF/scenario core in **JavaScript** and uses **Deno
 FFI directly against operating-system APIs** in each backend. Windows uses Win32
-plus COM/WinRT; macOS uses native
-CoreFoundation/CoreGraphics/ApplicationServices APIs where public equivalents
-exist. Sharp (`npm:sharp`) is the only always-loaded external/native dependency
-and is used only for image encode/decode. Tesseract.js (`npm:tesseract.js`) is
-the one approved optional lazy dependency and belongs only to the common OCR
-provider policy in `auto.js`. Do not introduce C, C++, Rust, another native
-addon, a project-owned library, generated bindings, other npm dependencies, or a
-build step unless the project direction is explicitly changed.
+plus COM/WinRT; macOS uses CoreFoundation/CoreGraphics/ApplicationServices,
+AppKit, Vision and IOKit; Linux uses AT-SPI and, under X11,
+Xlib/EWMH/XRandR/XTest. Sharp (`npm:sharp`) is the only always-loaded
+external/native dependency and is used only for image encode/decode.
+Tesseract.js (`npm:tesseract.js`) is the one approved optional lazy dependency
+and belongs only to the common OCR provider policy in `auto.js`. Do not
+introduce C, C++, Rust, another native addon, a project-owned library, generated
+bindings, other npm dependencies, or a build step unless the project direction
+is explicitly changed.
 
 ## Repository shape
 
@@ -378,18 +379,75 @@ RuntimeId only as an opaque current identity. Caching COM automation/walker
 interfaces is infrastructure only; never cache selectors, resolved elements,
 RuntimeIds, or scenario state across actions.
 
-AAF itself is platform-agnostic. Windows maps `window` to Win32 and `a11y` to UI
-Automation; macOS maps `window` to Quartz Window Services plus AX window
-operations and `a11y` to the AX accessibility tree; Linux maps `a11y` to AT-SPI
-and, on X11, `window` to Xlib/EWMH. Backend-specific fields such as owner IDs,
-direct-target mouse injection, native class names, frame/topmost/opacity
-mutations, client rectangles, or rich native parent trees are optional
-capabilities: never emulate an unavailable capability with misleading semantics.
-On Darwin, unsupported fields stay `null`, unsupported filters/actions produce
-no match/result, and explicit `WC` geometry is unavailable rather than silently
-treated as `W`. On Linux, detect Wayland before X11 so an XWayland `DISPLAY`
-never turns a Wayland session into a fake X11 desktop; keep AT-SPI available
-while unsupported global Wayland capabilities return no result.
+AAF itself is platform-agnostic. Keep the public vocabulary stable while each
+backend exposes only native capabilities with sufficiently equivalent semantics.
+Do not create platform-specific action names or a capability-object framework.
+The detailed implementation contract is below.
+
+## Backend portability contract
+
+Keep one flat backend module per operating system:
+
+- `auto_win.js` maps Win32, UI Automation, WinRT and related Windows APIs.
+- `auto_darwin.js` maps Quartz/CoreGraphics, AX, AppKit/Objective-C, Vision and
+  IOKit.
+- `auto_linux.js` maps AT-SPI in every Linux desktop session and switches its
+  global desktop implementation internally according to X11 versus Wayland.
+
+Do **not** split Linux into X11 and Wayland files merely because their global
+window models differ. AT-SPI, text selection and other accessibility behavior is
+the large common surface, so a split would duplicate real implementation. Put
+only the session-dependent branches around capabilities that actually differ.
+Detect Wayland before considering `DISPLAY`: XWayland is compatibility for X11
+applications, not authority over the entire Wayland desktop.
+
+The backend interface remains direct functions, not classes/adapters and not a
+nested capability registry. `auto.js` owns backend selection, AAF scenario
+execution, resource lifetime, image codec normalization and OCR provider policy.
+Backend files own native OS calls only. Passing an extra common field such as
+`ocr.provider` through a backend options object is fine when that backend simply
+ignores it; do not clone/delete fields just to make a narrower object.
+
+Unsupported capabilities use normal best-effort semantics. Never approximate
+`WC` with `W`, a Wayland desktop with XWayland, a native accessibility action
+with synthetic mouse input, or a direct-target mouse operation with physical
+cursor movement merely to claim support.
+
+Current platform decisions:
+
+- Windows is the reference/richest backend: HWND hierarchy/owner/client rect,
+  UIA, direct-target mouse messages, full current `window_set`, GDI capture,
+  WinRT OCR, all conditional waits, lock state and wake/awake are implemented.
+- Darwin uses Quartz for enumeration/display data and AX for cross-process
+  control/accessibility. There is no current native child-window tree,
+  direct-target mouse, foreign-window `WC`, `maximize`, lock query, or generic
+  frame/topmost/opacity/enabled mutation. `window_set` currently maps title
+  only. Darwin waits currently support window and OCR. Screenshot uses optional
+  `CGWindowListCreateImage`; keep the symbol optional because Apple deprecated
+  that API and capture failure must not prevent the whole backend from loading.
+- Linux X11 uses Xlib/EWMH/XRandR for windows/displays, XTest for physical
+  input, XGetImage for screenshots and AT-SPI for accessibility/text. Clipboard,
+  continuous `awake`, and conditional waits beyond window are not yet mapped.
+- Linux Wayland keeps AT-SPI but currently has no global window enumeration,
+  cross-application window control, physical injection, or screenshot path.
+  Those require compositor/portal-authorized mechanisms; do not bypass the
+  security model by pretending XWayland is equivalent to X11.
+
+OCR selection is deliberately outside native backend files. `provider: native`
+delegates to `backend.ocr(options)`. `provider: tesseract` lazily imports
+`npm:tesseract.js`. `provider: default` uses native OCR and falls back to
+Tesseract on Linux, where there is no universal native OCR service comparable to
+WinRT or Vision. Keep the import genuinely lazy so normal native OCR does not
+resolve Tesseract. Create/terminate the Tesseract worker inside each direct OCR
+call: a persistent worker keeps Deno alive and would introduce hidden process
+lifetime. Store trained-data cache under the user's cache directory, never the
+repository cwd. Preserve the project decision of no `deno.json`, `deno.lock`,
+tracked/local `node_modules`, manual npm install, or subprocess OCR.
+
+Verification claims must stay precise. Windows has the full self-contained
+runtime suite. Until actual macOS/Linux test machines are used, Darwin/Linux may
+be described as formatted/linted/type-checked and ABI-reviewed, but never as
+runtime-tested or fully certified.
 
 ## Displays and coordinates
 
@@ -552,9 +610,10 @@ should stay as `CGImage` for OCR instead of round-tripping through an encoded
 format; caller-returned encoded image resources are decoded to the common BGRA8
 representation at the shared codec boundary first.
 
-Do not replace native OCR with Tesseract or a subprocess. OCR provider selection
-belongs to `auto.js`: `native` delegates to the selected backend, `tesseract`
-lazily imports `npm:tesseract.js`, and `default` uses native OCR with automatic
+Do not replace the Windows WinRT or Darwin Vision native OCR paths with
+Tesseract, and never use a subprocess for OCR. OCR provider selection belongs to
+`auto.js`: `native` delegates to the selected backend, `tesseract` lazily
+imports `npm:tesseract.js`, and `default` uses native OCR with automatic
 Tesseract fallback on Linux when native OCR is unavailable. Keep Tesseract out
 of native backend files. Import it lazily only when selected. Keep direct OCR
 calls stateless: create and terminate the Tesseract worker within the call so

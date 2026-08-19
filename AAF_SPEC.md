@@ -1034,8 +1034,8 @@ because `WC` already provides the canonical client-area geometry language.
 
 ## Accessibility filters
 
-`a11y` is platform-neutral. The current Windows backend maps it to Windows UI
-Automation; macOS can map it to AX, and Linux to AT-SPI.
+`a11y` is platform-neutral. Windows maps it to Windows UI Automation, macOS to
+AX, and Linux to AT-SPI in both X11 and Wayland sessions.
 
 ```yaml
 a11y:
@@ -1504,72 +1504,108 @@ saves an already retained image resource without recapturing anything.
 
 # 6. Portability and backend capabilities
 
-AAF is a platform-agnostic model. A backend implements the capabilities that its
-operating system and security model actually expose.
+AAF is platform-agnostic, but operating systems are not. `auto.js` keeps one
+action grammar and selects one flat native backend (`auto_win.js`,
+`auto_darwin.js`, or `auto_linux.js`). A backend implements only capabilities
+that the operating system exposes with sufficiently close semantics.
 
-The common structure is portable:
+Unavailable capabilities are **not emulated with a misleading approximation**. A
+filter requiring an unavailable property does not match; a direct primitive
+normally returns `null`, no match, or a documented no-op. The AAF grammar does
+not grow per-platform capability objects or alternate action names.
 
-- ordered actions and simple JSON-compatible results;
-- common filters with AND/OR semantics;
-- `window` as the native window-system domain;
-- `a11y` as the accessibility domain;
-- explicit `up` / `down` relationships and cross-domain bridges;
-- shared `pos` / `rect` geometry and time syntax;
-- keyboard, mouse, clipboard, screenshot, OCR, wait, and input-recovery
-  concepts;
-- accessibility discovery plus native accessibility actions when the backend
-  exposes them;
-- optional scenario state and run-scoped resources.
-
-Unavailable backend properties are optional capabilities. They must not be
-imitated with misleading semantics. A filter requiring an unavailable property
-does not match; an unsupported mutation follows normal best-effort behavior.
+| Capability                                              | Windows                                            | macOS                                        | Linux X11                                | Linux Wayland                                            |
+| ------------------------------------------------------- | -------------------------------------------------- | -------------------------------------------- | ---------------------------------------- | -------------------------------------------------------- |
+| native window discovery / geometry / hit testing        | yes, Win32                                         | yes, Quartz; no native child-window tree     | yes, Xlib/EWMH                           | no global surface enumeration                            |
+| window focus / move / size / minimize / restore / close | yes                                                | yes through AX                               | yes through EWMH/Xlib                    | no generic cross-application control                     |
+| window maximize                                         | yes                                                | unavailable in the current backend           | yes                                      | unavailable                                              |
+| `window_set`                                            | title, frame, topmost, opacity, enabled, highlight | title only                                   | title, topmost, opacity                  | unavailable                                              |
+| accessibility                                           | UI Automation                                      | AX                                           | AT-SPI                                   | AT-SPI                                                   |
+| `W` / `WC` / `D` geometry                               | yes                                                | `W` and `D`; `WC` unavailable                | yes                                      | accessibility geometry only where exposed by AT-SPI      |
+| physical keyboard / mouse                               | yes                                                | yes, CoreGraphics                            | yes, XTest                               | unavailable without an explicit compositor-mediated path |
+| direct-target mouse without moving the real pointer     | yes, HWND messages                                 | unavailable                                  | unavailable                              | unavailable                                              |
+| `input_sel`                                             | native text controls                               | AX text                                      | AT-SPI text                              | AT-SPI text                                              |
+| clipboard                                               | yes                                                | yes, NSPasteboard                            | not yet mapped                           | not yet mapped                                           |
+| screenshot                                              | GDI                                                | Quartz legacy capture when the symbol exists | XGetImage                                | unavailable in the current backend                       |
+| native OCR                                              | WinRT                                              | Vision                                       | none                                     | none                                                     |
+| Tesseract OCR                                           | explicit provider                                  | explicit provider                            | explicit or automatic `default` fallback | works on an already available image resource             |
+| conditional `wait`                                      | window / OCR / image / change                      | window / OCR                                 | window only                              | no useful global-window wait; scalar delay still works   |
+| system lock query                                       | yes                                                | unavailable (`locked: null`)                 | unavailable (`locked: null`)             | unavailable (`locked: null`)                             |
+| wake / continuous awake                                 | both                                               | both                                         | wake only                                | unavailable in the current backend                       |
 
 ## Windows
 
-The current implementation is Windows x64 and is presently the richest backend:
-
-- `window` → HWND / User32.
-- `a11y` → Windows UI Automation Control View.
-- native parent and owner are distinct relationships; window records also expose
-  sibling `zorder` and output-only client geometry.
-- display records expose the native desktop `scale` ratio.
-- physical input supports vertical/horizontal wheel and owned-input recovery;
-  some mouse input can also be directed to a specific HWND.
-- accessibility records expose supported native pattern actions, and
-  `a11y_action` executes those patterns directly.
-- `window_set` can use native caption, frame/style, topmost, opacity, and
-  enabled state.
+Windows is currently the reference and regression-tested backend. Win32 exposes
+a broad cross-process window model, including HWND parent/owner relationships,
+client rectangles, direct messages, style mutation, Z-order, and input
+injection. UI Automation supplies the separate accessibility tree, while WinRT
+supplies native OCR. This combination is why Windows currently has the richest
+mapping and supports the full conditional-wait set.
 
 ## macOS
 
-The same model can map to:
+macOS uses several public native surfaces rather than one HWND-like model:
 
-- native application/window surfaces for `window`.
-- Accessibility API (AX) for `a11y`.
-- accessibility parent/children, role/name/value/focus, and geometry.
+- Quartz Window Services enumerates desktop windows and display geometry;
+- Accessibility (AX) supplies cross-application accessibility plus window
+  focus/move/size/minimize/restore/close and text selection;
+- CoreGraphics injects physical keyboard/mouse events;
+- NSPasteboard supplies clipboard text;
+- Vision supplies native OCR;
+- IOKit power assertions implement `wake` / `awake`.
 
-The native window tree is generally less expressive than the Windows HWND tree,
-so more structural information may naturally live under `a11y`. The AAF grammar
-does not need to change.
+The missing pieces are deliberate. macOS does not expose a general public
+cross-process equivalent of the Windows child-HWND tree or direct `PostMessage`
+mouse delivery, and the current public surfaces do not give AutoJS a reliable
+foreign-window client rectangle (`WC`). `window_set` therefore exposes only the
+AX title mutation that has a real equivalent; frame/topmost/opacity/enabled and
+`maximize` are not guessed. Screenshot capture currently uses the legacy Quartz
+`CGWindowListCreateImage` symbol when present; because Apple has deprecated that
+API, its absence disables capture instead of preventing the entire Darwin
+backend from loading. Accessibility and screen capture may also be subject to
+macOS privacy permissions.
 
 ## Linux
 
-On Linux, `a11y` maps to AT-SPI in both X11 and Wayland sessions. The current
-X11 path additionally maps `window` to Xlib/EWMH, physical input to XTest, and
-screenshots to X11 capture. Native Linux OCR is currently unavailable, so
-`ocr.provider: default` falls back to the shared lazy Tesseract provider.
+Linux intentionally stays one backend file. AT-SPI is the same accessibility
+model under X11 and Wayland, so splitting Linux into two backends would
+duplicate the largest common cross-desktop surface. `auto_linux.js` detects the
+session internally and enables only the global desktop mechanisms appropriate to
+it.
 
-On Wayland, the main difference is capability and permission rather than
-grammar. A normal client cannot assume that it may enumerate, focus, move,
-capture, or inject input into arbitrary surfaces belonging to other
-applications. The current backend therefore keeps AT-SPI available but returns
-no result for unsupported global desktop operations instead of treating XWayland
-as the whole Wayland desktop.
+Under X11 the model is permissive enough for a broad mapping: Xlib/EWMH provides
+windows and geometry, XRandR provides displays, XTest provides physical input,
+and XGetImage provides screenshots. AT-SPI remains a separate accessibility
+surface. Clipboard and continuous-awake behavior are not yet mapped, and the
+Linux conditional `wait` implementation currently covers only windows.
 
-Windows, macOS, and Linux therefore do not need identical native fields. AAF
-keeps one model while each backend exposes its supported subset or superset
-without changing scenario structure.
+Wayland is intentionally different: its security model does not grant an
+ordinary client unrestricted global window enumeration, cross-application window
+control, screen capture, or input injection. AutoJS therefore checks Wayland
+**before** `DISPLAY`; an XWayland display is never treated as authority over the
+whole Wayland desktop. AT-SPI remains available because accessibility is
+independent of that global surface-control model. Future Wayland capture or
+input support must use compositor/portal-authorized mechanisms rather than
+pretending XWayland is equivalent to X11.
+
+Linux has no universal native OCR service comparable to WinRT or Vision.
+`provider: native` therefore returns no OCR result. OCR provider policy belongs
+to `auto.js`, not `auto_linux.js`: `provider: tesseract` lazily imports
+`npm:tesseract.js`, while `provider: default` tries native first and falls back
+to Tesseract automatically on Linux. The Tesseract worker is created and
+terminated inside each direct OCR call so it cannot keep the Deno process alive;
+its language cache lives in the user's cache directory rather than beside the
+project. No `deno.json`, `deno.lock`, `node_modules`, manual npm installation,
+or subprocess is required.
+
+## Verification status
+
+The Windows backend is covered by the repository's complete self-contained
+integration suite. The Darwin and Linux implementations are formatter/lint/type
+checked and reviewed against their native ABIs from the current development
+machine, but have not yet received equivalent runtime suites on macOS/Linux.
+Their capability rows above therefore describe the implemented contract, not a
+claim of cross-platform runtime certification.
 
 ---
 

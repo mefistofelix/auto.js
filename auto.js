@@ -2325,30 +2325,30 @@ function matchesWindowUiaRelation(window, direction, relation) {
   );
 }
 
-function uiaCollectFromRoot(root, filter, maxDepth, found, seen, limit) {
-  return uiaWalk(root, "down", maxDepth, (element) => {
-    const record = uiaRecord(element);
-    if (!matchesUia(element, record, filter)) return false;
-    const key = record.uid ??
-      `${record.wid ?? ""}:${record.pid ?? ""}:${record.name}:${record.type}:${
-        record.rect?.x ?? ""
-      }:${record.rect?.y ?? ""}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      found.push(record);
-    }
-    return found.length >= limit;
-  });
-}
-
 export function a11y_find({ a11y = {}, limit = 0 } = {}) {
   const max = findLimit(limit),
     filter = normalizeUiaFilter(a11y),
     found = [],
     seen = new Set();
   if (max == null) return [];
+
   const collect = (root, depth) =>
-    comUse(root, (e) => uiaCollectFromRoot(e, filter, depth, found, seen, max));
+    comUse(root, (tree) =>
+      uiaWalk(tree, "down", depth, (element) => {
+        const record = uiaRecord(element);
+        if (!matchesUia(element, record, filter)) return false;
+        const key = record.uid ??
+          `${record.wid ?? ""}:${
+            record.pid ?? ""
+          }:${record.name}:${record.type}:${record.rect?.x ?? ""}:${
+            record.rect?.y ?? ""
+          }`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          found.push(record);
+        }
+        return found.length >= max;
+      }));
   if (own(filter, "wid") && filter.wid != null && !Array.isArray(filter.wid)) {
     const record = comUse(uiaElementFromHandle(asPointer(filter.wid)), (e) => {
       const value = uiaRecord(e);
@@ -2366,20 +2366,21 @@ export function a11y_find({ a11y = {}, limit = 0 } = {}) {
   return found;
 }
 
-function uiaFindFromRoot(root, filter, depth = Infinity) {
-  let found = null;
-  uiaWalk(root, "down", depth, (element) => {
-    const record = uiaRecord(element);
-    if (!matchesUia(element, record, filter)) return false;
-    comCall(element, 1, "u32");
-    found = element;
-    return true;
-  });
-  return found;
-}
-
 function uiaResolve(filter = {}) {
   filter = normalizeUiaFilter(filter);
+  const find = (root, depth = Infinity) =>
+    comUse(root, (tree) => {
+      let found = null;
+      uiaWalk(tree, "down", depth, (element) => {
+        const record = uiaRecord(element);
+        if (!matchesUia(element, record, filter)) return false;
+        comCall(element, 1, "u32");
+        found = element;
+        return true;
+      });
+      return found;
+    });
+
   if (own(filter, "wid") && filter.wid != null && !Array.isArray(filter.wid)) {
     const element = uiaElementFromHandle(asPointer(filter.wid));
     if (!element) return null;
@@ -2391,17 +2392,11 @@ function uiaResolve(filter = {}) {
   const up = filter.up == null ? null : relationSpec(filter.up, "a11y");
   if (up?.domain === "window") {
     for (const window of windowRecords(up.filter)) {
-      const found = comUse(
-        uiaElementFromHandle(asPointer(window.wid)),
-        (root) => uiaFindFromRoot(root, filter, up.depth),
-      );
+      const found = find(uiaElementFromHandle(asPointer(window.wid)), up.depth);
       if (found) return found;
     }
   }
-  return comUse(
-    uiaRootElement(),
-    (root) => uiaFindFromRoot(root, filter, Infinity),
-  );
+  return find(uiaRootElement());
 }
 
 function uiaPattern(element, id) {

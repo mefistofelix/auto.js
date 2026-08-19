@@ -2,15 +2,17 @@
 
 ## Purpose
 
-`auto.js` is a minimal desktop-automation library. The current implementation target is **Deno on Windows x64 only**.
+`auto.js` is a minimal desktop-automation library for Deno with small native backends per operating system.
 
-The project deliberately keeps the automation core in **JavaScript + Deno FFI directly against Windows system DLLs and COM/WinRT vtables**. Sharp (`npm:sharp`) is the single approved external/native dependency and is used only for image encode/decode. Do not introduce C, C++, Rust, another native addon, a project-owned DLL, generated bindings, additional npm dependencies, or a build step unless the project direction is explicitly changed.
+The project keeps the common AAF/scenario core in **JavaScript** and uses **Deno FFI directly against operating-system APIs** in each backend. Windows uses Win32 plus COM/WinRT; macOS uses native CoreFoundation/CoreGraphics/ApplicationServices APIs where public equivalents exist. Sharp (`npm:sharp`) is the single approved external/native dependency and is used only for image encode/decode. Do not introduce C, C++, Rust, another native addon, a project-owned library, generated bindings, additional npm dependencies, or a build step unless the project direction is explicitly changed.
 
 ## Repository shape
 
-Keep the library itself in one file:
+Keep the runtime split flat and explicit:
 
-- `auto.js` — complete library implementation.
+- `auto.js` — common public entry point, backend selection, AAF scenario/state/resource logic, and shared image-codec boundary.
+- `auto_win.js` — Windows backend.
+- `auto_darwin.js` — macOS backend.
 - `examples/` — executable end-to-end examples/tests.
 - `AGENTS.md` — project rules and architectural notes.
 - `DEV_PREF.md` — repository engineering preferences; apply it as written.
@@ -18,7 +20,7 @@ Keep the library itself in one file:
 
 Keep `AAF_SPEC.md` visually scannable. The document title and every numbered macro-section use H1; major units inside a macro-section use H2. In the Action Reference, each action is its own H2 with a one-line *italic* purpose statement followed by **Action input** and **Action output** blocks. Explain every action field briefly; for shared structures such as `window`, `a11y`, `display`, `pos`, `rect`, time values, references, or resources, link to the canonical section instead of duplicating their full grammar. Use **bold** for functional labels/constraints and *italic* for concise descriptive prose. Keep generous structural whitespace: macro-sections get clear source spacing, and action H2 blocks use a small rendered spacer when ordinary Markdown blank lines would collapse visually. Keep the micro glossary near the introduction short and limited to recurring vocabulary. Split conceptual terms from fields/references: conceptual terms use normal prose styling, while literal AAF field/reference names use monospace. Do not add placeholder mini-sections that merely say a concept is documented later: introduce macro concepts only where their full canonical explanation belongs. Order actions by domain and keep related prefixes such as `window_*` together. Within each domain, list the most commonly useful actions and fields first.
 
-Do not split `auto.js` into internal modules merely for organization. Minimal distribution is a project goal.
+Do not add more internal modules merely for organization. The common entry point plus one backend file per operating system is the intended boundary; prefer a few direct backend functions over framework-like interfaces, classes, adapters, or generated bindings.
 
 ## API design
 

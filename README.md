@@ -1,8 +1,8 @@
 # AutoJS
 
-AutoJS is a minimal desktop-automation library for **Deno on Windows x64**.
+AutoJS is a minimal desktop-automation library for **Deno** with native operating-system backends.
 
-The automation core is implemented as a single JavaScript file using Deno FFI directly against Win32, COM, and WinRT. **Sharp is the only external dependency** and is used only for WebP/PNG image codecs; there is no project-owned DLL and no build step.
+The common AAF/scenario core lives in `auto.js`; native operations live in small backend files using Deno FFI directly against the operating system. Windows uses Win32, COM, and WinRT. **Sharp is the only external dependency** and is used only for WebP/PNG image codecs; there is no project-owned native library and no build step.
 
 AutoJS exposes both direct JavaScript functions and **AAF — Automation Action Format**, a small JSON/YAML-friendly action model for serialized desktop automation scenarios.
 
@@ -22,7 +22,8 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 
 ## Requirements
 
-- Windows x64
+- Windows x64 for the complete current regression suite
+- macOS for the Darwin backend as capabilities are implemented
 - Deno
 - network access on first dependency resolution for `npm:sharp`
 
@@ -99,7 +100,9 @@ deno run -A examples/suite.js
 ## Project structure
 
 ```text
-auto.js               complete library implementation
+auto.js               common entry point and AAF runtime
+auto_win.js           Windows native backend
+auto_darwin.js        macOS native backend
 AAF_SPEC.md            authoritative AAF specification
 examples/suite.js      self-contained regression suite
 examples/notepad.js    real-application integration example
@@ -110,4 +113,4 @@ AGENTS.md              implementation and project rules
 
 AutoJS intentionally favors a small distribution and direct operating-system APIs over abstraction layers. Primitive actions are stateless; `run()` adds only explicit per-scenario `prev`, `state`, and run-scoped resource lifetime, then returns `{results, state}` and transfers final-state image resources to the caller.
 
-The current backend is Windows x64. AAF itself is designed so additional platform backends can map the same high-level domains to their native window and accessibility systems.
+`auto.js` selects the native backend from `Deno.build.os`. The backend boundary stays at the automation primitive level so unsupported operating-system capabilities can return no result instead of being emulated with misleading semantics.

@@ -1204,20 +1204,18 @@ async function saveImage(image, path, format) {
   return { path, bytes: bytes.length, format: codec };
 }
 // Geometry, input, and clipboard
-function sendInput(type, fill, label) {
+function sendInput(type, fill) {
   const input = new Uint8Array(40), view = new DataView(input.buffer);
   view.setUint32(0, type, true);
   fill(view);
-  if (user32.symbols.SendInput(1, input, 40) !== 1) {
-    throw new Error(`SendInput(${label}) failed`);
-  }
+  return user32.symbols.SendInput(1, input, 40) === 1;
 }
 
 function mouseInput(flags, data = 0) {
-  sendInput(INPUT_MOUSE, (v) => {
+  return sendInput(INPUT_MOUSE, (v) => {
     v.setUint32(16, data >>> 0, true);
     v.setUint32(20, flags >>> 0, true);
-  }, "mouse");
+  });
 }
 
 function geometryContext(info, display) {
@@ -1466,16 +1464,14 @@ function packMousePoint({ x, y }) {
 
 function postMouseButton(hwnd, spec, down, point) {
   const client = clientRect(hwnd);
-  if (!client) throw new Error("GetClientRect failed");
+  if (!client) return false;
   const pos = { x: point.x - client.x, y: point.y - client.y };
-  if (
-    !user32.symbols.PostMessageW(
-      hwnd,
-      spec.message[down ? 0 : 1],
-      BigInt(down ? spec.state : 0),
-      packMousePoint(pos),
-    )
-  ) throw new Error("PostMessage(mouse button) failed");
+  return !!user32.symbols.PostMessageW(
+    hwnd,
+    spec.message[down ? 0 : 1],
+    BigInt(down ? spec.state : 0),
+    packMousePoint(pos),
+  );
 }
 
 function postMouseWheel(hwnd, amount, point, horizontal = false) {
@@ -1483,13 +1479,12 @@ function postMouseWheel(hwnd, amount, point, horizontal = false) {
       ((Math.round(amount * WHEEL_DELTA) & 0xffff) << 16) >>> 0,
     ),
     message = horizontal ? WM_MOUSEHWHEEL : WM_MOUSEWHEEL;
-  if (
-    !user32.symbols.PostMessageW(hwnd, message, wParam, packMousePoint(point))
-  ) {
-    throw new Error(
-      `PostMessage(mouse ${horizontal ? "horizontal " : ""}wheel) failed`,
-    );
-  }
+  return !!user32.symbols.PostMessageW(
+    hwnd,
+    message,
+    wParam,
+    packMousePoint(point),
+  );
 }
 const heldMouse = new Map();
 export function mouse_button(options = {}) {
@@ -1523,12 +1518,13 @@ export function mouse_button(options = {}) {
   if (action === "wheel" || action === "hwheel") {
     const amount = Number(value), horizontal = action === "hwheel";
     if (!Number.isFinite(amount)) return null;
-    direct
+    const sent = direct
       ? postMouseWheel(asPointer(info.wid), amount, point, horizontal)
       : mouseInput(
         horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL,
         Math.round(amount * WHEEL_DELTA),
       );
+    if (!sent) return null;
     return { [action]: amount, ...(direct && { wid: info.wid }), pos: point };
   }
   const button = String(value).toLowerCase(), spec = mouseButtons[button];
@@ -1540,14 +1536,14 @@ export function mouse_button(options = {}) {
     hold = `${direct ? info.wid.toLowerCase() : "physical"}:${button}`;
   if (action === "click") {
     for (let i = 0; i < count; i++) {
-      send(true);
-      send(false);
+      if (!send(true)) return null;
+      if (!send(false)) return null;
       const pause = timeMs(interval, 0, options);
       if (pause && i + 1 < count) sleepSync(pause);
     }
   } else {
     const isDown = action === "down";
-    send(isDown);
+    if (!send(isDown)) return null;
     if (isDown) heldMouse.set(hold, { direct, wid: info?.wid, button, point });
     else heldMouse.delete(hold);
   }
@@ -1636,11 +1632,11 @@ const VK = Object.fromEntries([
   [226, "oem102"],
 ].flatMap(([code, names]) => names.split(" ").map((name) => [name, code])));
 function keyboardInput(vk, scan, flags) {
-  sendInput(INPUT_KEYBOARD, (v) => {
+  return sendInput(INPUT_KEYBOARD, (v) => {
     v.setUint16(8, vk, true);
     v.setUint16(10, scan, true);
     v.setUint32(12, flags, true);
-  }, "keyboard");
+  });
 }
 
 function foregroundKeyboardLayout() {
@@ -1669,7 +1665,7 @@ function keyFlags(vk, layout, up = false) {
 }
 
 function sendVirtualKey(vk, down, layout = foregroundKeyboardLayout()) {
-  keyboardInput(vk, 0, keyFlags(vk, layout, !down));
+  return keyboardInput(vk, 0, keyFlags(vk, layout, !down));
 }
 const heldKeys = new Map();
 function keySequence(name, layout) {
@@ -1690,14 +1686,11 @@ function keySequence(name, layout) {
 
 function keyState(name, down) {
   const layout = foregroundKeyboardLayout(), keys = keySequence(name, layout);
-  if (!keys || keys.length !== 1) return false;
-  try {
-    sendVirtualKey(keys[0], down, layout);
-    down ? heldKeys.set(keys[0], layout) : heldKeys.delete(keys[0]);
-    return true;
-  } catch {
+  if (!keys || keys.length !== 1 || !sendVirtualKey(keys[0], down, layout)) {
     return false;
   }
+  down ? heldKeys.set(keys[0], layout) : heldKeys.delete(keys[0]);
+  return true;
 }
 
 function keyNames(value) {
@@ -1713,26 +1706,26 @@ function pressKeys(value) {
   for (const name of requested) {
     const keys = keySequence(name, layout);
     if (!keys) continue;
-    accepted.push(name);
+    let ok = true;
     for (const vk of keys) {
       if (active.has(vk)) continue;
-      sendVirtualKey(vk, true, layout);
+      if (!sendVirtualKey(vk, true, layout)) {
+        ok = false;
+        break;
+      }
       active.add(vk);
       sequence.push(vk);
     }
+    if (ok) accepted.push(name);
   }
   for (const vk of sequence.reverse()) sendVirtualKey(vk, false, layout);
   return accepted;
 }
 
 function typeCodeUnit(code) {
-  try {
-    keyboardInput(0, code, KEYEVENTF_UNICODE);
-    keyboardInput(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
-    return true;
-  } catch {
-    return false;
-  }
+  const down = keyboardInput(0, code, KEYEVENTF_UNICODE);
+  const up = keyboardInput(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP);
+  return down && up;
 }
 
 function typeUnits(text) {
@@ -1811,22 +1804,17 @@ function releaseInput(keep = { keys: new Set(), mouse: new Set() }) {
   let released = 0;
   for (const [vk, layout] of [...heldKeys]) {
     if (!keep.keys.has(vk)) {
-      try {
-        sendVirtualKey(vk, false, layout);
-        released++;
-      } catch {}
+      if (sendVirtualKey(vk, false, layout)) released++;
       heldKeys.delete(vk);
     }
   }
   for (const [key, hold] of [...heldMouse]) {
     if (!keep.mouse.has(key)) {
-      try {
-        const spec = mouseButtons[hold.button];
-        hold.direct
-          ? postMouseButton(asPointer(hold.wid), spec, false, hold.point)
-          : mouseInput(spec.input[1]);
-        released++;
-      } catch {}
+      const spec = mouseButtons[hold.button];
+      const sent = hold.direct
+        ? postMouseButton(asPointer(hold.wid), spec, false, hold.point)
+        : mouseInput(spec.input[1]);
+      if (sent) released++;
       heldMouse.delete(key);
     }
   }

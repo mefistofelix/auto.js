@@ -3,6 +3,7 @@ import sharp from "npm:sharp";
 const backendPath = {
   windows: "./auto_win.js",
   darwin: "./auto_darwin.js",
+  linux: "./auto_linux.js",
 }[Deno.build.os];
 
 if (!backendPath) {
@@ -87,6 +88,23 @@ async function nativeOcr(options) {
 
 const TESSERACT_MODULE = "npm:" + "tesseract.js";
 
+function tesseractCachePath() {
+  try {
+    const home = Deno.env.get("HOME");
+    const base = Deno.build.os === "windows"
+      ? Deno.env.get("LOCALAPPDATA")
+      : Deno.build.os === "darwin"
+      ? home && `${home}/Library/Caches`
+      : Deno.env.get("XDG_CACHE_HOME") ?? (home && `${home}/.cache`);
+    if (!base) return null;
+    const path = `${base}/auto.js/tesseract`;
+    Deno.mkdirSync(path, { recursive: true });
+    return path;
+  } catch {
+    return null;
+  }
+}
+
 async function tesseractOcr(options) {
   const image = options.image
     ? await imageBGRA(options.image)
@@ -96,7 +114,12 @@ async function tesseractOcr(options) {
   let worker;
   try {
     const { createWorker } = await import(TESSERACT_MODULE);
-    worker = await createWorker();
+    const cachePath = tesseractCachePath();
+    worker = await createWorker(
+      "eng",
+      1,
+      cachePath ? { cachePath } : { cacheMethod: "none" },
+    );
     const png = await sharpImage(image).png().toBuffer();
     const { data } = await worker.recognize(png);
     return { text: data.text, rect: image.rect };

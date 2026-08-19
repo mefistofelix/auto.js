@@ -37,3 +37,54 @@ These principles apply across languages, runtimes, and frameworks.
 - When blocking work must coexist with asynchronous code, make the boundary explicit at the caller using the language's standard thread or executor mechanism.
 
 ---
+
+## GitHub
+
+- Never mention Codex, Claude, ChatGPT, or any other agent/assistant name in commit messages, commit authorship, or repository metadata.
+- Never expose user-specific or private information in repositories, commits, issues, releases, logs, or generated artifacts.
+- Use `git` by default; `jj` is an acceptable alternative when it is already part of the workflow.
+- Use the `gh` CLI for GitHub-specific operations such as releases, workflow inspection, issues, pull requests, and API access.
+
+### Workflow preferences
+
+- Prefer commands already available on GitHub-hosted runners, especially `git` and `gh`.
+- Avoid `uses:` actions, including convenience wrappers such as `actions/checkout`; use direct commands instead unless an action is explicitly required.
+- Keep `push:` present but commented out when useful for quick opt-in CI, and include `workflow_dispatch:` so the workflow can always be triggered manually.
+- Keep workflow YAML minimal. Do not embed substantial shell or application logic in the workflow; delegate real work to repository scripts such as `build.sh`.
+- After checkout, ensure repository shell scripts are executable before invoking them.
+- Fetch only the commit needed by the job whenever full history is unnecessary. Prefer a shallow checkout such as `--depth=1`.
+- Prefer release steps to behave as an upsert so rerunning the same version or commit is convenient: create the release when it does not exist, otherwise upload the artifacts to the existing release with replacement enabled (for example `gh release create ... || gh release upload ... --clobber`).
+
+```yaml
+name: 'ci'
+on:
+  #push:
+  workflow_dispatch:
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    steps:
+      - run: |
+          git init
+          git remote add origin $GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+          git fetch origin --depth=1 $GITHUB_SHA
+          git checkout $GITHUB_SHA
+      - run: |
+          shopt -s globstar
+          chmod +x ./**/*.sh
+          ./build.sh
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_SHA:0:12}" ./bin/bip --target "$GITHUB_SHA" ||
+          gh release upload "${GITHUB_SHA:0:12}" ./bin/bip --clobber
+```
+
+### Interactive debugging on GitHub Actions runners
+
+- For debugging on another operating system, create a dedicated minimal ad hoc workflow for the target runner platform.
+- In that workflow, download the appropriate `pigeons` binary from the `n0-computer/pigeons` GitHub releases and start the tunnel directly from the job.
+- Monitor the workflow log to obtain the tunnel information, then connect from the local machine using `pigeons` locally as well.
+- Once connected, run only the commands needed to reproduce, inspect, and debug the problem on that platform.
+- Keep these sessions short and purposeful because hosted-runner time is limited. The goal is to shorten the cross-platform debug loop, not to use CI runners as long-lived development machines.

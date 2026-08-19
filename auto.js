@@ -2981,64 +2981,58 @@ function stateParent(root, path, create) {
   return target;
 }
 
-function compileState(value, context, prefix = [], ops = []) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+function applyStatePatch(root, patch, context, prefix = []) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     scenarioFail("invalid state patch");
   }
-  for (const [rawKey, item] of Object.entries(value)) {
+
+  const hasDelete = !prefix.length && own(patch, "-");
+  const remove = hasDelete ? patch["-"] : [];
+  if (hasDelete && !Array.isArray(remove)) scenarioFail("invalid state delete");
+
+  for (const [rawKey, item] of Object.entries(patch)) {
+    if (!prefix.length && rawKey === "-") continue;
+
     const key = stateKey(rawKey);
     if (!key) scenarioFail("invalid state path", { path: rawKey });
     const path = [...prefix, ...key.path];
-    if (!key.push && item && typeof item === "object" && !Array.isArray(item)) {
-      if (!Object.keys(item).length) ops.push(["object", path]);
-      else compileState(item, context, path, ops);
+    const object = !key.push && item && typeof item === "object" &&
+      !Array.isArray(item);
+
+    if (object && Object.keys(item).length) {
+      applyStatePatch(root, item, context, path);
       continue;
     }
-    ops.push([
-      key.push ? "push" : "set",
-      path,
-      resolveScenarioValue(item, context),
-    ]);
-  }
-  return ops;
-}
 
-function resolveStateAction(value, context) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    scenarioFail("invalid state patch");
-  }
-  const patch = {}, remove = [];
-  for (const [key, item] of Object.entries(value)) {
-    if (key !== "-") {
-      patch[key] = item;
+    const parent = stateParent(root, path, true);
+    const leaf = path.at(-1);
+    if (object) {
+      if (
+        !own(parent, leaf) || !parent[leaf] ||
+        typeof parent[leaf] !== "object" || Array.isArray(parent[leaf])
+      ) parent[leaf] = Object.create(null);
       continue;
     }
-    if (!Array.isArray(item)) scenarioFail("invalid state delete");
-    for (const name of item) {
-      const resolved = resolveScenarioValue(name, context),
-        path = statePath(resolved);
-      if (!path) scenarioFail("invalid state path", { path: String(resolved) });
-      remove.push(path);
-    }
-  }
-  return { ops: compileState(patch, context), remove };
-}
 
-function applyStateOps(root, ops) {
-  for (const [op, path, value] of ops) {
-    const parent = stateParent(root, path, true), leaf = path.at(-1);
-    if (op === "push") {
+    const value = resolveScenarioValue(item, context);
+    if (key.push) {
       if (!own(parent, leaf)) parent[leaf] = [];
       if (!Array.isArray(parent[leaf])) {
         scenarioFail("state target is not an array", { path: path.join(".") });
       }
       parent[leaf].push(value);
-    } else if (op === "object") {
-      if (
-        !own(parent, leaf) || !parent[leaf] ||
-        typeof parent[leaf] !== "object" || Array.isArray(parent[leaf])
-      ) parent[leaf] = Object.create(null);
-    } else parent[leaf] = value;
+    } else {
+      parent[leaf] = value;
+    }
+  }
+
+  if (!hasDelete) return;
+  for (const name of remove) {
+    const resolved = resolveScenarioValue(name, context);
+    const path = statePath(resolved);
+    if (!path) scenarioFail("invalid state path", { path: String(resolved) });
+    const parent = stateParent(root, path, false);
+    if (parent) delete parent[path.at(-1)];
   }
 }
 
@@ -3101,13 +3095,8 @@ export async function run(actions = []) {
         name = entries[0][0];
         stateStep = name === "state";
         if (stateStep) {
-          const resolved = resolveStateAction(params, context),
-            next = structuredClone(context.state);
-          applyStateOps(next, resolved.ops);
-          for (const path of resolved.remove) {
-            const parent = stateParent(next, path, false);
-            if (parent) delete parent[path.at(-1)];
-          }
+          const next = structuredClone(context.state);
+          applyStatePatch(next, params, context);
           context.state = next;
           result = next;
         } else {

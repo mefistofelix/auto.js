@@ -58,7 +58,7 @@ This scenario finds a Notepad window, remembers it, focuses it, types text, capt
 
 - screenshot_save:
     image: "$.state.shot"      # reuse the retained resource; no recapture
-    save: "notepad.png"
+    save: "notepad.webp"
 
 - wait:
     timeout: 5s
@@ -120,8 +120,9 @@ This scenario finds a Notepad window, remembers it, focuses it, types text, capt
   shot: "8b80b0d6-..."
 
 - image: "8b80b0d6-..."
-  path: "notepad.png"
+  path: "notepad.webp"
   bytes: 42871
+  format: webp
   rect: { x: 320, y: 220, width: 960, height: 520 }
   grayscale: false
 
@@ -244,22 +245,26 @@ An array of window records. A valid search with no matches returns `[]`.
 
 ## `window_get`
 
-*Get the first native window matching a filter, with optional live native text retrieval.*
+*Get the first native window matching a filter, with optional live text and selection retrieval.*
 
 **Action input**
 
 - `window` — [window filter](#window-filters) selecting the target.
 - `text` — when `true`, also query the target's live text/content rather than relying only on the normal enumerated `title` field.
+- `selection` — when `true`, also query the selected range of a supported native text control.
 
 ```yaml
 - window_get:
     window: { class: "^Edit$" }
-    text: true # query live control text
+    text: true
+    selection: true
 ```
 
 **Action output**
 
-One window record or `null`. With `text: true`, the record also contains `text`, which is a string when the native control supports safe text retrieval or `null` otherwise. On Windows this uses bounded `WM_GETTEXT`, so standard cross-process Edit, Static, Button, and similar control contents can be read even when `GetWindowText` is insufficient.
+One window record or `null`. With `text: true`, the record also contains `text`, which is a string when the native control supports safe text retrieval or `null` otherwise. With `selection: true`, supported native text controls also return `selection: {start, end, text}` using UTF-16 indices; unsupported controls return `selection: null`.
+
+On Windows, live text uses bounded `WM_GETTEXT`. Selection uses the native Edit/RichEdit selection messages, so it does not require synthetic keyboard shortcuts.
 
 ---
 
@@ -305,6 +310,7 @@ The current window record after the operation, or `null` when no target can be r
 - `topmost` — boolean topmost state.
 - `opacity` — number from `0` to `1`.
 - `enabled` — boolean enabled/input state.
+- `selection` — selection operation for supported native text controls: `{start, end}` selects a range; `{text}` replaces the current selection; `{start, end, text}` selects then replaces it.
 - `highlight` — `true` or an AAF [time value](#time-values); draws a temporary outline after applying the other fields.
 
 There is no generic `class` setter. Native class/control identity is not generally an instance property that can be truthfully renamed across backends.
@@ -318,11 +324,15 @@ There is no generic `class` setter. Native class/control identity is not general
     opacity: 0.85
     enabled: true
     highlight: 800ms
+
+- window_set:
+    window: { class: "^Edit$" }
+    selection: { start: 0, end: 5, text: "Hello" }
 ```
 
 **Action output**
 
-The current window record after applying the requested properties, or `null` when no target can be resolved.
+The current window record after applying the requested properties, or `null` when no target can be resolved. When `selection` is supplied, the returned record also reports the resulting `selection` when the native control supports it.
 
 ---
 
@@ -451,7 +461,7 @@ Exactly one of `window` or `a11y` must be supplied.
 - `pos` — destination [position](#position-and-rectangle).
 - `window` — optional [window filter](#window-filters) providing a window-relative geometry context.
 - `display` — optional [display](#displays) context.
-- `duration` — optional [time value](#time-values) for interpolated movement.
+- `duration` — optional [time value](#time-values) for interpolated movement. `user()` selects a human-like duration and slightly irregular curved path while still ending exactly at `pos`.
 - `steps` — optional interpolation granularity used during a non-zero-duration move.
 
 ```yaml
@@ -459,6 +469,10 @@ Exactly one of `window` or `a11y` must be supplied.
     window: { wid: "$.state.target.wid" }
     pos: { at: centerWC, x: "+20", y: "-10" }
     duration: 400ms
+
+- mouse_move:
+    pos: { x: 800, y: 500 }
+    duration: user()
 ```
 
 **Action output**
@@ -484,7 +498,7 @@ Exactly one of `window` or `a11y` must be supplied.
 - `pos` — [position](#position-and-rectangle) for the operation; direct-window mode defaults to `centerWC`.
 - `display` — optional [display](#displays) geometry context.
 - `repeat` — positive integer, default `1`; valid only with `click`.
-- `interval` — [time value](#time-values) between repeated clicks, default `0`.
+- `interval` — [time value](#time-values) between repeated clicks, default `0`; `rand(...)` or `user()` may vary each gap.
 
 Exactly one of `click`, `down`, `up`, `wheel`, or `hwheel` is allowed.
 
@@ -521,6 +535,7 @@ An object describing the applied operation and resolved `pos`; direct-target mod
 - `type` — Unicode text sent directly, independent of keyboard layout.
 - `repeat` — positive integer, default `1`; valid only with `press`.
 - `interval` — [time value](#time-values) between repeated `press` operations, or between characters for `type`; default `0`.
+- `duration` — total [time value](#time-values) for `type`. It is mutually exclusive with an explicitly supplied `interval`. With `user()`, typing uses independent human-like per-character delays instead of a fixed total.
 
 Named keys include letters and digits; Backspace, Tab, Enter, Escape and navigation keys; Caps/Num/Scroll Lock; Print Screen; left/right Shift, Ctrl, Alt and Windows keys; numpad keys; F1–F24; Apps/context-menu; and common browser, volume, media and launch keys. Numeric virtual-key codes remain available for backend-specific cases.
 
@@ -539,6 +554,14 @@ Named keys include letters and digits; Backspace, Tab, Enter, Escape and navigat
 - keyb:
     type: "Hello world"
     interval: 30ms
+
+- keyb:
+    type: "Hello world"
+    duration: user()
+
+- keyb:
+    type: "Hello world"
+    duration: "rand($action.type.len*10)"
 ```
 
 **Action output**
@@ -611,7 +634,7 @@ Exactly one operation is allowed.
 - `all` — when `true`, capture the complete virtual desktop.
 - `grayscale` — when `true`, convert the retained image to grayscale.
 - `save` — optional destination path for immediately saving the newly captured resource.
-- `format` — saved format; currently `png`.
+- `format` — optional `webp | png`. WebP is the default; when omitted, a `.png` or `.webp` `save` extension selects that codec naturally.
 
 ```yaml
 - screenshot:
@@ -620,7 +643,7 @@ Exactly one operation is allowed.
       at: centerWC
       width: "80%WC"
       height: "80%WC"
-    save: "capture.png"
+    save: "capture.webp"
 ```
 
 **Action output**
@@ -629,8 +652,9 @@ Exactly one operation is allowed.
 image: "opaque-resource-id"
 rect: { x: 260, y: 180, width: 900, height: 500 }
 grayscale: false
-path: "capture.png"   # only when save was used
+path: "capture.webp"  # only when save was used
 bytes: 42871           # only when save was used
+format: webp           # only when save was used
 ```
 
 `image` is opaque, run-scoped, and must never be parsed or persisted across runs. Resource lifetime is defined in [Image resources](#image-resources).
@@ -647,17 +671,17 @@ bytes: 42871           # only when save was used
 
 - `image` — opaque image handle retained in scenario state; see [Image resources](#image-resources).
 - `save` — destination path.
-- `format` — saved format; currently `png`.
+- `format` — optional `webp | png`. WebP is the default; when omitted, a `.png` or `.webp` `save` extension selects that codec naturally.
 
 ```yaml
 - screenshot_save:
     image: "$.state.shot"
-    save: "later.png"
+    save: "later.webp"
 ```
 
 **Action output**
 
-`{image, path, bytes, rect, grayscale}` when the retained resource is available. Inside `run()`, an unavailable/stale resource is reported through the scenario diagnostic result described under [`run()`](#run).
+`{image, path, bytes, format, rect, grayscale}` when the retained resource is available. Inside `run()`, an unavailable/stale resource is reported through the scenario diagnostic result described under [`run()`](#run).
 
 ---
 
@@ -715,7 +739,7 @@ For conditional waits:
 - `not` — invert the condition.
 - `window` — [window filter](#window-filters); succeeds when a matching window exists.
 - `ocr` — OCR condition. `text` is a case-insensitive regex; remaining fields describe the OCR capture source as in [`ocr`](#ocr).
-- `image` — image-template condition. `path` is the PNG template, `similarity` defaults to `0.98`, and the remaining fields describe the screenshot source.
+- `image` — image-template condition. `path` is a WebP or PNG template, `similarity` defaults to `0.98`, and the remaining fields describe the screenshot source.
 - `change` — visual-change condition. `percent` is the minimum changed-pixel percentage and the remaining fields describe the screenshot source.
 
 Exactly one of `window`, `ocr`, `image`, or `change` is allowed in a conditional wait.
@@ -735,7 +759,7 @@ Exactly one of `window`, `ocr`, `image`, or `change` is allowed in a conditional
 - wait:
     timeout: 10s
     image:
-      path: "ready.png"
+      path: "ready.webp"
       window: { wid: "$.state.target.wid" }
       similarity: 0.98
 ```
@@ -1046,16 +1070,25 @@ For a window geometry update, `rect` is resolved first and `pos` then reposition
 
 ## Time values
 
-One grammar is used everywhere:
+One small grammar is used everywhere:
 
 ```text
-250       250 milliseconds
-250ms     250 milliseconds
-2s        2 seconds
-1.5m      90 seconds
+250                              250 milliseconds
+250ms                            250 milliseconds
+2s                               2 seconds
+1.5m                             90 seconds
+rand(300ms)                      random value from 0 to 300 ms
+rand($action.type.len*10)        random value derived from resolved action data
+user()                           short context-sensitive human-like timing
 ```
 
-Numbers are milliseconds. String time values require `ms`, `s`, or `m`.
+Numbers and unitless numeric terms are milliseconds. Strings may use `ms`, `s`, or `m`.
+
+`rand(expr)` evaluates its bound when that time value is consumed. A duration is normally consumed once; a repeated `interval` is consumed again for each gap or poll, so it can vary naturally. Its intentionally tiny expression syntax supports only multiplication of numeric/time terms and `$action` dot paths. A final `.len` reads the length of a string or array. There is no general expression language and no `eval`.
+
+Inside `run()`, `$action` sees the current action arguments **after** normal `$.prev` / `$.state` reference resolution and interpolation. Direct primitive calls use their supplied argument object as `$action`.
+
+`user()` is contextual rather than a fixed duration. Generic interval use chooses a short human-like delay. `mouse_move.duration: user()` additionally generates a mildly curved, jittered trajectory that lands exactly on the destination. For `keyb.type`, `duration: user()` or `interval: user()` generates independent per-character pauses, including slightly longer pauses around punctuation.
 
 ---
 

@@ -1,5 +1,7 @@
-// auto.js — Windows desktop automation for Deno, pure FFI.
-// Current target: Windows x64 + Deno. No native addon, no C/C++, no dependencies.
+import sharp from "npm:sharp";
+
+// auto.js — Windows desktop automation for Deno.
+// Current target: Windows x64 + Deno. Native OS APIs + Sharp for image codecs.
 if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") throw new Error("auto.js currently supports Windows x64 only");
 function dll(name, text) {
   const symbols = {};
@@ -17,30 +19,54 @@ const combase = dll("combase.dll", `RoInitialize i32 u32; RoGetActivationFactory
 const shcore = dll("shcore.dll", `GetScaleFactorForMonitor i32 pointer buffer`);
 try { user32.symbols.SetProcessDPIAware(); } catch { /* already configured is fine */ }
 const textDecoder16 = new TextDecoder("utf-16le"), POINTER_SIZE = 8, CF_UNICODETEXT = 13, PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, MONITOR_DEFAULTTONEAREST = 2, SRCCOPY = 0x00cc0020, PW_RENDERFULLCONTENT = 2;
-const WM_CLOSE = 0x10, WM_SETTEXT = 0x0c, WM_GETTEXT = 0x0d, WM_GETTEXTLENGTH = 0x0e, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205, WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208, WM_MOUSEWHEEL = 0x20a, WM_MOUSEHWHEEL = 0x20e;
+const WM_CLOSE = 0x10, WM_SETTEXT = 0x0c, WM_GETTEXT = 0x0d, WM_GETTEXTLENGTH = 0x0e, EM_GETSEL = 0xb0, EM_SETSEL = 0xb1, EM_REPLACESEL = 0xc2, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205, WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208, WM_MOUSEWHEEL = 0x20a, WM_MOUSEHWHEEL = 0x20e;
 const GA_PARENT = 1, GA_ROOT = 2, GW_HWNDPREV = 3, GW_OWNER = 4, GWL_STYLE = -16, GWL_EXSTYLE = -20, WS_CHILD = 0x40000000, WS_BORDER = 0x00800000, WS_DLGFRAME = 0x00400000, WS_CAPTION = WS_BORDER | WS_DLGFRAME;
 const WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000, WS_EX_LAYERED = 0x00080000, LWA_ALPHA = 2, FRAME_STYLE_MASK = WS_BORDER | WS_DLGFRAME | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 const SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOZORDER = 4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20, INPUT_MOUSE = 0, INPUT_KEYBOARD = 1, KEYEVENTF_EXTENDEDKEY = 1, KEYEVENTF_KEYUP = 2, KEYEVENTF_UNICODE = 4, MOUSEEVENTF_WHEEL = 0x0800, MOUSEEVENTF_HWHEEL = 0x1000, WHEEL_DELTA = 120;
 function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
-function timeMs(value, fallback = 0) {
-  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
-  const match = typeof value === "string" && value.trim().match(/^(\d+(?:\.\d*)?|\.\d+)\s*(ms|s|m)$/i);
-  if (!match) return fallback;
-  return +match[1] * ({ ms: 1, s: 1000, m: 60000 })[match[2].toLowerCase()];
+function timeAtom(value, action) {
+  const text = String(value).trim(), ref = text.match(/^\$action((?:\.[A-Za-z_][A-Za-z0-9_-]*)+)$/);
+  if (ref) {
+    let current = action;
+    for (const key of ref[1].slice(1).split(".")) {
+      if (key === "len") { current = current != null && typeof current.length === "number" ? current.length : null; continue; }
+      if (current == null || !Object.prototype.hasOwnProperty.call(Object(current), key)) return null;
+      current = current[key];
+    }
+    const number = Number(current); return Number.isFinite(number) ? number : null;
+  }
+  const match = text.match(/^(\d+(?:\.\d*)?|\.\d+)\s*(ms|s|m)?$/i);
+  return match ? +match[1] * ({ ms: 1, s: 1000, m: 60000 }[match[2]?.toLowerCase()] ?? 1) : null;
 }
-function delay(value) { return new Promise((resolve) => setTimeout(resolve, timeMs(value))); }
+function timeExpr(text, action) {
+  let result = 1;
+  for (const part of String(text).split("*")) { const value = timeAtom(part, action); if (value == null) return null; result *= value; }
+  return Number.isFinite(result) ? result : null;
+}
+function timeMs(value, fallback = 0, action) {
+  if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, value);
+  if (typeof value !== "string") return fallback;
+  if (userTime(value)) return userInterval();
+  const text = value.trim(), random = text.match(/^rand\((.+)\)$/i), resolved = timeExpr(random ? random[1] : text, action);
+  if (resolved == null) return fallback;
+  return Math.max(0, random ? Math.random() * resolved : resolved);
+}
+function userTime(value) { return typeof value === "string" && /^user\(\)$/i.test(value.trim()); }
+function userInterval() { return 45 + Math.random() * 105; }
+function delay(value, action) { return new Promise((resolve) => setTimeout(resolve, timeMs(value, 0, action))); }
 export async function wait(options = 0) {
   if (!options || typeof options !== "object" || Array.isArray(options)) { await delay(options); return true; }
   const kinds = ["window", "ocr", "image", "change"].filter((key) => options[key] != null);
-  if (!kinds.length) { await delay(options.time ?? options.ms ?? 0); return true; }
+  if (!kinds.length) { await delay(options.time ?? options.ms ?? 0, options); return true; }
   if (kinds.length !== 1) return null;
   const kind = kinds[0], prepared = await prepareWaitCondition(kind, options[kind]);
   if (!prepared) return null;
-  const until = performance.now() + timeMs(options.timeout, 10000), interval = Math.max(1, timeMs(options.interval, 100));
+  const until = performance.now() + timeMs(options.timeout, 10000, options);
   for (;;) {
     const state = await testWaitCondition(kind, prepared);
     if (state.ready !== false && (options.not ? !state.matched : state.matched)) return options.not ? true : state.value;
-    const remaining = until - performance.now(); if (remaining <= 0) return null; await delay(Math.min(interval, remaining));
+    const remaining = until - performance.now(); if (remaining <= 0) return null;
+    const interval = Math.max(1, timeMs(options.interval, 100, options)); await delay(Math.min(interval, remaining));
   }
 }
 function ptrValue(pointer) { return pointer ? Deno.UnsafePointer.value(pointer) : 0n; }
@@ -195,7 +221,28 @@ function windowMessageText(hwnd) {
   const raw = sendMessage(hwnd,WM_GETTEXTLENGTH); if (raw == null) return null; const length = Number(raw); if (!Number.isSafeInteger(length) || length < 0 || length > 1048576) return null;
   const buffer = new Uint16Array(length + 1), written = sendMessage(hwnd,WM_GETTEXT,BigInt(buffer.length),Deno.UnsafePointer.of(buffer)); return written == null ? null : decodeWide(buffer,Math.min(Number(written),length));
 }
-export function window_get({ window = {}, text = false } = {}) { const found = windowRecords(window)[0]; if (!found) return null; const out = publicWindow(found); if (text) out.text = windowMessageText(asPointer(found.wid)); return out; }
+function textControl(hwnd) { return /^(?:edit|richedit)/i.test(windowClass(hwnd)); }
+function windowSelection(hwnd, text = windowMessageText(hwnd)) {
+  if (!textControl(hwnd)) return null;
+  const start = new Uint32Array(1), end = new Uint32Array(1), out = new BigUint64Array(1), startPtr = Deno.UnsafePointer.of(start);
+  if (!user32.symbols.SendMessageTimeoutW(hwnd, EM_GETSEL, ptrValue(startPtr), Deno.UnsafePointer.of(end), 3, 250, out)) return null;
+  const a = start[0], b = end[0]; return { start: a, end: b, text: text == null ? null : text.slice(Math.min(a,b), Math.max(a,b)) };
+}
+function setWindowSelection(hwnd, selection) {
+  if (!textControl(hwnd) || !selection || typeof selection !== "object" || Array.isArray(selection)) return null;
+  let current = windowSelection(hwnd); if (!current) return null;
+  if (own(selection,"start") || own(selection,"end")) {
+    const start = Number(selection.start ?? current.start), end = Number(selection.end ?? start);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < 0) return null;
+    if (sendMessage(hwnd, EM_SETSEL, BigInt(start), end ? asPointer(end) : null) == null) return null;
+  }
+  if (own(selection,"text")) { const text = wide(String(selection.text ?? ""), true); if (sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(text)) == null) return null; }
+  return windowSelection(hwnd);
+}
+export function window_get({ window = {}, text = false, selection = false } = {}) {
+  const found = windowRecords(window)[0]; if (!found) return null; const out = publicWindow(found), hwnd = asPointer(found.wid), live = text || selection ? windowMessageText(hwnd) : null;
+  if (text) out.text = live; if (selection) out.selection = windowSelection(hwnd, live); return out;
+}
 export function window_wait({ window = {}, timeout = 5000, interval = 50 } = {}) { return wait({ window,timeout,interval }); }
 function sessionLocked() {
   const out = new BigUint64Array(1), bytes = new Uint32Array(1);
@@ -247,11 +294,11 @@ function setWindowOpacity(hwnd, opacity) {
   const ex = user32.symbols.GetWindowLongW(hwnd, GWL_EXSTYLE) >>> 0; if (!(ex & WS_EX_LAYERED)) user32.symbols.SetWindowLongW(hwnd, GWL_EXSTYLE, (ex | WS_EX_LAYERED) | 0);
   return !!user32.symbols.SetLayeredWindowAttributes(hwnd, 0, Math.round(opacity * 255), LWA_ALPHA);
 }
-export async function window_set({ window = {}, title, frame, topmost, opacity, enabled, highlight: mark } = {}) {
+export async function window_set({ window = {}, title, frame, topmost, opacity, enabled, selection, highlight: mark } = {}) {
   const info = windowRecords(window)[0]; if (!info) return null; const hwnd = asPointer(info.wid);
   if (title != null) setWindowTitle(hwnd, title); if (frame != null) setWindowFrame(hwnd, frame); if (topmost != null) setWindowTopmost(hwnd, !!topmost);
-  if (opacity != null) setWindowOpacity(hwnd, opacity); if (enabled != null) user32.symbols.EnableWindow(hwnd, enabled ? 1 : 0);
-  if (mark) await highlight({ window: { wid: info.wid }, duration: mark === true ? 800 : mark }); return window_get({ window: { wid: info.wid } });
+  if (opacity != null) setWindowOpacity(hwnd, opacity); if (enabled != null) user32.symbols.EnableWindow(hwnd, enabled ? 1 : 0); if (selection != null) setWindowSelection(hwnd, selection);
+  if (mark) await highlight({ window: { wid: info.wid }, duration: mark === true ? 800 : mark }); return window_get({ window: { wid: info.wid }, selection: selection != null });
 }
 export function window_hit({ pos, display, child = false } = {}) {
   const point = mouseTarget(null, display, pos)?.to;
@@ -293,13 +340,14 @@ function createHighlightRect(rect) {
     return windows;
   } catch (error) { for (const hwnd of windows) user32.symbols.DestroyWindow(hwnd); throw error; }
 }
-export async function highlight({ window, a11y, duration = 800 } = {}) {
+export async function highlight(options = {}) {
+  const { window, a11y, duration = 800 } = options;
   if ((window == null) === (a11y == null)) return null;
   const target = window != null ? window_get({ window }) : a11y_find({ a11y, limit: 1 })[0];
   if (!target?.rect) return null;
   const overlays = createHighlightRect(target.rect);
   if (!overlays.length) return null;
-  try { await delay(timeMs(duration, 800)); } finally { for (const hwnd of overlays) user32.symbols.DestroyWindow(hwnd); }
+  try { await delay(timeMs(duration, 800, options)); } finally { for (const hwnd of overlays) user32.symbols.DestroyWindow(hwnd); }
   return { ...(target.wid && { wid: target.wid }), ...(target.uid && { uid: target.uid }), rect: target.rect };
 }
 // Capture and PNG
@@ -351,40 +399,22 @@ function captureScreenshot(options = {}) {
     gdi32.symbols.DeleteObject(bitmap); gdi32.symbols.DeleteDC(memory); user32.symbols.ReleaseDC(null, screen);
   }
 }
-let crcTable;
-function crc32(data) {
-  crcTable ??= Uint32Array.from({ length: 256 }, (_, n) => { let c = n; for (let i = 0; i < 8; i++) c = (c & 1) ? 0xedb88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
-  let c = 0xffffffff; for (const byte of data) c = crcTable[(c ^ byte) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0;
+function imageCodec(format, path) {
+  const codec = String(format ?? path?.match(/\.(png|webp)$/i)?.[1] ?? "webp").toLowerCase();
+  if (codec !== "png" && codec !== "webp") throw new Error(`Unsupported image format: ${codec}`);
+  return codec;
 }
-function concat(...parts) {
-  const out = new Uint8Array(parts.reduce((n, x) => n + x.length, 0));
-  let offset = 0; for (const part of parts) { out.set(part, offset); offset += part.length; } return out;
+function sharpImage({ rect: { width, height }, data }) {
+  const rgba = data.slice();
+  for (let i = 0; i < rgba.length; i += 4) { const red = rgba[i]; rgba[i] = rgba[i + 2]; rgba[i + 2] = red; }
+  return sharp(rgba, { raw: { width, height, channels: 4 } });
 }
-function pngChunk(type, data) {
-  const name = new TextEncoder().encode(type), head = new Uint8Array(4), tail = new Uint8Array(4);
-  new DataView(head.buffer).setUint32(0, data.length, false); new DataView(tail.buffer).setUint32(0, crc32(concat(name, data)), false);
-  return concat(head, name, data, tail);
-}
-async function png({ rect: { width, height }, data, grayscale }) {
-  const channels = grayscale ? 1 : 4, stride = width * channels + 1, raw = new Uint8Array(stride * height);
-  for (let y = 0; y < height; y++) {
-    let dst = y * stride + 1, src = y * width * 4;
-    for (let x = 0; x < width; x++, src += 4) {
-      if (grayscale) raw[dst++] = data[src];
-      else { raw[dst++] = data[src + 2]; raw[dst++] = data[src + 1]; raw[dst++] = data[src]; raw[dst++] = data[src + 3]; }
-    }
-  }
-  const compressed = new Uint8Array(await new Response(new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate"))).arrayBuffer());
-  const ihdr = new Uint8Array(13), view = new DataView(ihdr.buffer);
-  view.setUint32(0, width, false); view.setUint32(4, height, false); ihdr[8] = 8; ihdr[9] = grayscale ? 0 : 6;
-  return concat(Uint8Array.of(137,80,78,71,13,10,26,10), pngChunk("IHDR", ihdr), pngChunk("IDAT", compressed), pngChunk("IEND", new Uint8Array()));
-}
-async function saveImage(image, path, format = "png") {
+async function saveImage(image, path, format) {
   if (!path) return {};
-  if (String(format).toLowerCase() !== "png") throw new Error(`Unsupported image format: ${format}`);
-  const bytes = await png(image);
+  const codec = imageCodec(format, path), pipeline = sharpImage(image);
+  const bytes = codec === "webp" ? await pipeline.webp({ quality: 80 }).toBuffer() : await pipeline.png().toBuffer();
   await Deno.writeFile(path, bytes);
-  return { path, bytes: bytes.length };
+  return { path, bytes: bytes.length, format: codec };
 }
 // Geometry, input, and clipboard
 function sendInput(type, fill, label) {
@@ -471,18 +501,26 @@ function mouseTarget(info, display, pos, defaultAt) {
   const relative = rect ? geometryAnchor(geometry, target?.at, rect) : from;
   return { from, to: resolvePos(target, relative, geometry, target?.at == null ? from : relative) };
 }
-export async function mouse_move({ pos, display, duration = 0, steps, window } = {}) {
-  const info = window == null ? null : windowRecords(window)[0], target = mouseTarget(info, display, pos);
+function humanMouse(from, to) {
+  const dx = to.x - from.x, dy = to.y - from.y, distance = Math.hypot(dx,dy), length = distance || 1, nx = -dy / length, ny = dx / length;
+  const bend = (Math.random() - .5) * Math.min(140, distance * .35), c1 = { x: from.x + dx * .3 + nx * bend, y: from.y + dy * .3 + ny * bend }, c2 = { x: from.x + dx * .72 - nx * bend * .35, y: from.y + dy * .72 - ny * bend * .35 };
+  const duration = Math.max(120, Math.min(900, 80 + Math.sqrt(distance) * 22)) * (.8 + Math.random() * .4);
+  return { duration, point(t) {
+    if (t >= 1) return to;
+    const u = 1 - t, jitter = Math.min(2.5, distance / 120) * u;
+    return { x: u*u*u*from.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*to.x + (Math.random()-.5)*2*jitter, y: u*u*u*from.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*to.y + (Math.random()-.5)*2*jitter };
+  } };
+}
+export async function mouse_move(options = {}) {
+  const { pos, display, duration: durationSpec = 0, steps: requestedSteps, window } = options, info = window == null ? null : windowRecords(window)[0], target = mouseTarget(info, display, pos);
   if (!target) return null;
   if (window != null && !info) return { pos: target.from };
-  const { from, to } = target;
-  duration = timeMs(duration);
+  const { from, to } = target, human = userTime(durationSpec) ? humanMouse(from,to) : null, duration = human?.duration ?? timeMs(durationSpec, 0, options);
   if (duration <= 0) return { pos: user32.symbols.SetCursorPos(to.x, to.y) ? to : from };
-  steps ??= Math.max(2, Math.round(duration / 16));
+  const steps = requestedSteps ?? Math.max(2, Math.round(duration / 16));
   for (let i = 1; i <= steps; i++) {
-    const t = i / steps;
-    user32.symbols.SetCursorPos(Math.round(from.x + (to.x - from.x) * t), Math.round(from.y + (to.y - from.y) * t));
-    if (i < steps) await wait(duration / steps);
+    const t = i / steps, point = human ? human.point(t) : { x: from.x + (to.x-from.x)*t, y: from.y + (to.y-from.y)*t };
+    user32.symbols.SetCursorPos(Math.round(point.x), Math.round(point.y)); if (i < steps) await delay(duration / steps);
   }
   return { pos: to };
 }
@@ -503,8 +541,8 @@ function postMouseWheel(hwnd, amount, point, horizontal = false) {
   if (!user32.symbols.PostMessageW(hwnd, message, wParam, packMousePoint(point))) throw new Error(`PostMessage(mouse ${horizontal ? "horizontal " : ""}wheel) failed`);
 }
 const heldMouse = new Set();
-export function mouse_button({ click, down, up, wheel, hwheel, window, display, pos, repeat = 1, interval = 0 } = {}) {
-  const actions = Object.entries({ click, down, up, wheel, hwheel }).filter(([, value]) => value != null);
+export function mouse_button(options = {}) {
+  const { click, down, up, wheel, hwheel, window, display, pos, repeat = 1, interval = 0 } = options, actions = Object.entries({ click, down, up, wheel, hwheel }).filter(([, value]) => value != null);
   if (actions.length !== 1) throw new Error("mouse_button requires exactly one of click, down, up, wheel, hwheel");
   const [action, value] = actions[0];
   if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`Invalid repeat: ${repeat}`);
@@ -522,8 +560,7 @@ export function mouse_button({ click, down, up, wheel, hwheel, window, display, 
   const button = String(value).toLowerCase(), spec = mouseButtons[button];
   if (!spec) throw new Error(`Unknown mouse button: ${value}`);
   const send = (down) => direct ? postMouseButton(asPointer(info.wid), spec, down, point) : mouseInput(spec.input[down ? 0 : 1]);
-  interval = timeMs(interval);
-  if (action === "click") for (let i = 0; i < repeat; i++) { send(true); send(false); if (interval && i + 1 < repeat) sleepSync(interval); }
+  if (action === "click") for (let i = 0; i < repeat; i++) { send(true); send(false); const pause = timeMs(interval, 0, options); if (pause && i + 1 < repeat) sleepSync(pause); }
   else { const isDown = action === "down"; send(isDown); if (!direct) isDown ? heldMouse.add(button) : heldMouse.delete(button); }
   return { [action]: button, ...(repeat !== 1 && { repeat }), ...(direct && { wid: info.wid }), pos: point };
 }
@@ -599,35 +636,35 @@ async function pressKeys(value) {
 function typeCodeUnit(code) {
   try { keyboardInput(0, code, KEYEVENTF_UNICODE); keyboardInput(0, code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP); return true; } catch { return false; }
 }
-async function typeText(text, interval) {
+function typeUnits(text) {
+  const units = [];
+  for (let i = 0; i < text.length; i++) { const code = text.charCodeAt(i); if (code === 13 || code === 10) { if (code === 13 && text.charCodeAt(i+1) === 10) i++; units.push({ enter:true, char:"\n" }); } else units.push({ code, char:text[i] }); }
+  return units;
+}
+function userKeyDelay(char) { return userInterval() + (/[.,!?;:]$/.test(char) ? 60 + Math.random()*180 : /\s/.test(char) ? Math.random()*40 : 0); }
+async function typeText(text, interval, duration, action) {
+  const units = typeUnits(text), human = userTime(duration) || userTime(interval), total = duration != null && !userTime(duration) ? timeMs(duration,0,action) : null, fixed = total != null && units.length > 1 ? total / (units.length - 1) : 0;
   let typed = 0;
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
-    if (code === 0x0d || code === 0x0a) {
-      if (code === 0x0d && text.charCodeAt(i + 1) === 0x0a) i++;
-      if ((await pressKeys("enter")).length) typed++;
-    } else if (typeCodeUnit(code)) {
-      typed++;
-    }
-    if (interval > 0 && i + 1 < text.length) await wait({ ms: interval });
+  for (let i = 0; i < units.length; i++) {
+    const unit = units[i], ok = unit.enter ? (await pressKeys("enter")).length : typeCodeUnit(unit.code); if (ok) typed++;
+    if (i + 1 < units.length) { const pause = human ? userKeyDelay(unit.char) : total != null ? fixed : timeMs(interval,0,action); if (pause > 0) await delay(pause); }
   }
   return typed;
 }
-export async function keyb({ press, down, up, type, repeat = 1, interval = 0 } = {}) {
+export async function keyb(options = {}) {
+  const { press, down, up, type, repeat = 1, interval = 0, duration } = options;
   if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`Invalid repeat: ${repeat}`);
   if (repeat !== 1 && press == null) throw new Error("keyb repeat is only valid with press");
-  interval = timeMs(interval);
+  if (duration != null && type == null) throw new Error("keyb duration is only valid with type");
+  if (duration != null && own(options,"interval")) throw new Error("keyb type accepts either duration or interval");
   const result = {};
   if (press != null) {
-    for (let i = 0; i < repeat; i++) {
-      result.press = await pressKeys(press);
-      if (interval > 0 && i + 1 < repeat) await delay(interval);
-    }
+    for (let i = 0; i < repeat; i++) { result.press = await pressKeys(press); const pause = timeMs(interval,0,options); if (pause > 0 && i + 1 < repeat) await delay(pause); }
     if (repeat !== 1) result.repeat = repeat;
   }
   if (down != null) result.down = keyNames(down).filter((name) => keyState(name, true));
   if (up != null) result.up = keyNames(up).filter((name) => keyState(name, false));
-  if (type != null) result.typed = await typeText(String(type), interval);
+  if (type != null) result.typed = await typeText(String(type), interval, duration, options);
   return result;
 }
 export function input_reset() {
@@ -837,49 +874,12 @@ export async function ocr(options={}) {
   finally { comRelease(result,operation,engine,statics,bitmap); }
 }
 // Image matching and synchronization
-function paeth(a, b, c) {
-  const p = a + b - c, da = Math.abs(p - a), db = Math.abs(p - b), dc = Math.abs(p - c);
-  return da <= db && da <= dc ? a : db <= dc ? b : c;
-}
-async function readPng(path) {
-  const bytes = await Deno.readFile(path), signature = [137,80,78,71,13,10,26,10];
-  if (bytes.length < 8 || signature.some((byte, i) => bytes[i] !== byte)) return null;
-  let width = 0, height = 0, depth = 0, color = -1, interlace = 0, offset = 8;
-  const idat = [];
-  while (offset + 12 <= bytes.length) {
-    const length = new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0, false);
-    if (offset + length + 12 > bytes.length) return null;
-    const type = String.fromCharCode(...bytes.subarray(offset + 4, offset + 8)), data = bytes.subarray(offset + 8, offset + 8 + length);
-    if (type === "IHDR") {
-      if (length !== 13) return null;
-      const view = new DataView(data.buffer, data.byteOffset, 13);
-      width = view.getUint32(0, false); height = view.getUint32(4, false); depth = data[8]; color = data[9]; interlace = data[12];
-    } else if (type === "IDAT") idat.push(data.slice());
-    else if (type === "IEND") break;
-    offset += length + 12;
-  }
-  const channels = ({ 0: 1, 2: 3, 4: 2, 6: 4 })[color];
-  if (!width || !height || depth !== 8 || !channels || interlace || !idat.length) return null;
-  const raw = new Uint8Array(await new Response(new Blob([concat(...idat)]).stream().pipeThrough(new DecompressionStream("deflate"))).arrayBuffer());
-  const rowBytes = width * channels, pixels = new Uint8Array(rowBytes * height);
-  if (raw.length < (rowBytes + 1) * height) return null;
-  let src = 0;
-  for (let y = 0; y < height; y++) {
-    const filter = raw[src++], row = y * rowBytes;
-    if (filter > 4) return null;
-    for (let x = 0; x < rowBytes; x++) {
-      const left = x >= channels ? pixels[row + x - channels] : 0, up = y ? pixels[row - rowBytes + x] : 0, corner = y && x >= channels ? pixels[row - rowBytes + x - channels] : 0;
-      const prediction = filter === 0 ? 0 : filter === 1 ? left : filter === 2 ? up : filter === 3 ? (left + up) >> 1 : paeth(left, up, corner);
-      pixels[row + x] = (raw[src++] + prediction) & 255;
-    }
-  }
-  const data = new Uint8Array(width * height * 4);
-  for (let i = 0, p = 0; i < width * height; i++, p += channels) {
-    const out = i * 4, gray = color === 0 || color === 4;
-    data[out] = gray ? pixels[p] : pixels[p + 2]; data[out + 1] = pixels[p + (gray ? 0 : 1)]; data[out + 2] = pixels[p];
-    data[out + 3] = color === 4 ? pixels[p + 1] : color === 6 ? pixels[p + 3] : 255;
-  }
-  return { rect: { x: 0, y: 0, width, height }, format: "bgra8", data };
+async function readImage(path) {
+  try {
+    const { data, info } = await sharp(path).ensureAlpha().raw().toBuffer({ resolveWithObject: true }), bgra = new Uint8Array(data).slice();
+    for (let i = 0; i < bgra.length; i += 4) { const red = bgra[i]; bgra[i] = bgra[i + 2]; bgra[i + 2] = red; }
+    return { rect: { x: 0, y: 0, width: info.width, height: info.height }, format: "bgra8", data: bgra };
+  } catch { return null; }
 }
 function rgbDiff(a, ai, b, bi) { return Math.abs(a[ai] - b[bi]) + Math.abs(a[ai + 1] - b[bi + 1]) + Math.abs(a[ai + 2] - b[bi + 2]); }
 function imageScoreAt(source, template, ox, oy, threshold) {
@@ -931,7 +931,7 @@ async function prepareWaitCondition(kind, spec) {
   if (kind === "image") {
     if (typeof spec === "string") spec = { path: spec };
     if (!spec || typeof spec !== "object" || !spec.path) return null;
-    const template = await readPng(spec.path); return template && { spec, template };
+    const template = await readImage(spec.path); return template && { spec, template };
   }
   if (kind !== "change") return null;
   spec ??= {};
@@ -977,7 +977,7 @@ function collectScenarioResources(resources, context) {
 }
 async function scenarioScreenshot(options, resources) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
-  const { save, format = "png", ...capture } = options, image = captureScreenshot(capture);
+  const { save, format, ...capture } = options, image = captureScreenshot(capture);
   if (!image) return null;
   const id = crypto.randomUUID();
   resources.set(id, { kind: "image", value: image, retained: false });
@@ -986,7 +986,7 @@ async function scenarioScreenshot(options, resources) {
 }
 async function scenarioScreenshotSave(options, resources) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
-  const { image: id, save, format = "png" } = options, resource = resources.get(id);
+  const { image: id, save, format } = options, resource = resources.get(id);
   if (!save || !resource?.retained || resource.kind !== "image") return null;
   return imageResult(id, resource.value, await saveImage(resource.value, save, format));
 }

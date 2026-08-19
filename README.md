@@ -2,19 +2,19 @@
 
 AutoJS is a minimal desktop-automation library for **Deno on Windows x64**.
 
-It is implemented as a single JavaScript file using Deno FFI directly against Win32, COM, and WinRT. There are no npm dependencies, no native addon, no project-owned DLL, and no build step.
+The automation core is implemented as a single JavaScript file using Deno FFI directly against Win32, COM, and WinRT. **Sharp is the only external dependency** and is used only for WebP/PNG image codecs; there is no project-owned DLL and no build step.
 
 AutoJS exposes both direct JavaScript functions and **AAF — Automation Action Format**, a small JSON/YAML-friendly action model for serialized desktop automation scenarios.
 
 ## Features
 
-- native window discovery, filtering, tree relations, geometry, control, mutation, hit testing, and text reads
-- Windows UI Automation accessibility discovery and window/accessibility cross-relations
+- native window discovery, filtering, tree relations, geometry, control, mutation, hit testing, live text, and text selection helpers
+- Windows UI Automation accessibility discovery/actions and window/accessibility cross-relations
 - display discovery and W / WC / D coordinate references
-- physical and direct-target mouse input
-- keyboard press/down/up/type, repeated presses, and active-layout character mapping
+- physical and direct-target mouse input, including human-like movement timing
+- keyboard press/down/up/type, repeated presses, active-layout character mapping, and human/random timing
 - clipboard read/write/clear
-- screenshots, PNG encoding, retained scenario image resources, and screenshot reuse
+- screenshots with WebP default and PNG support, retained scenario image resources, and screenshot reuse
 - Windows-native OCR through WinRT
 - polling waits for windows, OCR, images, and visual changes
 - explicit scenario `state`, references, interpolation, push/delete operations, and resource lifetime
@@ -24,6 +24,7 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 
 - Windows x64
 - Deno
+- network access on first dependency resolution for `npm:sharp`; `deno.lock` pins the resolved dependency graph
 
 Run scripts with permissions sufficient for FFI, process creation, desktop input, and file access:
 
@@ -70,6 +71,7 @@ The same primitives can be represented as JSON/YAML-compatible actions and execu
 
 - keyb:
     type: "AAF test 42"
+    duration: user()
 
 - wait:
     timeout: 5s
@@ -84,7 +86,7 @@ See [`AAF_SPEC.md`](AAF_SPEC.md) for the complete AAF specification.
 
 `examples/suite.js` is the primary regression suite. It creates its own private Win32 fixture process and controls that fixture instead of relying on pre-existing desktop state.
 
-It verifies windows, accessibility, relations, limits, geometry, mouse, keyboard, clipboard, screenshots, OCR, waits, scenario state/resources, system/session helpers, and cross-process window text reads.
+It verifies windows, accessibility/actions, relations, limits, geometry, mouse, keyboard, `rand($action...)` / `user()` timing, clipboard, native text selection, WebP/PNG screenshots, OCR, waits, scenario state/resources, system/session helpers, and cross-process window text reads.
 
 ```text
 deno run -A examples/suite.js
@@ -96,6 +98,7 @@ deno run -A examples/suite.js
 
 ```text
 auto.js               complete library implementation
+deno.json / deno.lock  Deno/Sharp dependency resolution
 AAF_SPEC.md            authoritative AAF specification
 examples/suite.js      self-contained regression suite
 examples/notepad.js    real-application integration example

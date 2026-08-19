@@ -248,6 +248,13 @@ try {
   same(window_get({ window: { wid: editWindow.wid }, text: true })?.text, EDIT_INITIAL, "window_get edit text failed");
   same(window_get({ window: { wid: statusWindow.wid }, text: true })?.text, `${STATUS_PREFIX} 0`, "window_get label text failed");
   same((await run([{ window_get: { window: { wid: editWindow.wid }, text: true } }]))[0]?.text, EDIT_INITIAL, "scenario window_get text failed");
+  await window_set({ window: { wid: editWindow.wid }, selection: { start: 0, end: 4 } });
+  same(window_get({ window: { wid: editWindow.wid }, selection: true })?.selection?.text, "EDIT", "window_get selection failed");
+  await window_set({ window: { wid: editWindow.wid }, selection: { text: "TEST" } });
+  same(window_get({ window: { wid: editWindow.wid }, text: true })?.text, "TEST READY", "window_set selection replacement failed");
+  const restoredSelection = (await run([{ window_set: { window: { wid: editWindow.wid }, selection: { start: 0, end: 4, text: "EDIT" } } }]))[0];
+  same(restoredSelection?.selection?.text, "", "scenario selection replacement should leave a caret");
+  same(window_get({ window: { wid: editWindow.wid }, text: true })?.text, EDIT_INITIAL, "selection test did not restore fixture text");
   assert(nestedWindow.depth >= 2, "nested native depth was not preserved");
   same(
     window_find({ window: { wid: root.wid, down: { class: "^Button$", depth: "all" } }, limit: 1 })[0]?.wid,
@@ -377,6 +384,9 @@ try {
   }
   const clientPoint = await mouse_move({ window: { wid: root.wid }, pos: { at: "centerWC", x: "+10", y: "-10" } });
   assert(clientPoint?.pos, "mouse_move WC geometry failed");
+  const humanPoint = await mouse_move({ pos: clientPoint.pos, duration: "user()" });
+  same(humanPoint?.pos.x, clientPoint.pos.x, "human mouse x destination failed");
+  same(humanPoint?.pos.y, clientPoint.pos.y, "human mouse y destination failed");
   let clicks = 0;
   same(a11y_action({ a11y: { wid: buttonWindow.wid }, action: "invoke" })?.action, "invoke", "a11y invoke action failed");
   clicks++;
@@ -449,6 +459,14 @@ try {
     same(mapped.press[0], "@", "layout-mapped key press failed");
     const finalText = `${shortened}@`;
     await eventually(() => editValue() === finalText, "layout-mapped @ did not reach fixture edit");
+    const timed = await run([{ state: { timingText: "XY" } }, { keyb: { type: "$.state.timingText", duration: "rand($action.type.len*10)" } }]);
+    same(timed[1]?.typed, 2, "$action timing expression failed after scenario normalization");
+    await eventually(() => editValue() === `${finalText}XY`, "timed scenario typing did not reach fixture edit");
+    await keyb({ press: "backspace", repeat: 2 });
+    const humanTyped = await keyb({ type: "UV", duration: "user()" });
+    same(humanTyped.typed, 2, "user typing duration failed");
+    await keyb({ press: "backspace", repeat: 2 });
+    await eventually(() => editValue() === finalText, "timing tests did not restore fixture text");
     const down = await keyb({ down: "shift" });
     const up = await keyb({ up: "shift" });
     same(down.down[0], "shift", "keyb down failed");
@@ -458,7 +476,7 @@ try {
     assert(input_reset().released >= 1, "input_reset did not release held keyboard input");
     same((await run([{ input_reset: {} }]))[0]?.released, 0, "scenario input_reset failed");
     await eventually(() => editValue() === finalText, "final keyboard text did not remain in fixture edit");
-    check("keyb press/type/down/up/repeat/layout mapping + input_reset");
+    check("keyb press/type/down/up/repeat/layout mapping/timing + input_reset");
   } else {
     console.log("↷ keyb injection verification skipped: fixture is not foreground on an interactive desktop");
   }
@@ -469,6 +487,12 @@ try {
     screenshot: { window: { wid: root.wid }, save: fullPng },
   }]))[0];
   assert(immediate?.bytes > 0 && immediate.path === fullPng, "screenshot immediate save failed");
+  same(immediate.format, "png", "PNG extension inference failed");
+  const defaultImage = `${temp}\\default-codec`;
+  const defaultSaved = (await run([{ screenshot: { window: { wid: root.wid }, save: defaultImage } }]))[0];
+  same(defaultSaved?.format, "webp", "default screenshot codec must be WebP");
+  const defaultBytes = await Deno.readFile(defaultImage);
+  same(new TextDecoder().decode(defaultBytes.subarray(0, 4)), "RIFF", "default WebP signature missing");
 
   const recognized = await ocr({ window: { wid: root.wid } });
   assert(recognized?.text, "ocr returned no text");
@@ -480,17 +504,17 @@ try {
   );
   check("screenshot save, ocr, wait.ocr");
 
-  const templatePng = `${temp}\\template.png`;
+  const templateWebp = `${temp}\\template.webp`;
   const template = (await run([{
-    screenshot: { window: { wid: root.wid }, save: templatePng },
+    screenshot: { window: { wid: root.wid }, save: templateWebp },
   }]))[0];
-  assert(template?.bytes > 0, "template screenshot failed");
+  assert(template?.bytes > 0 && template.format === "webp", "default WebP screenshot failed");
   const imageMatch = await wait({
-    image: { path: templatePng, window: { wid: root.wid }, similarity: 1 },
+    image: { path: templateWebp, window: { wid: root.wid } },
     timeout: 1000,
     interval: 50,
   });
-  assert(imageMatch?.similarity === 1, "wait.image exact match failed");
+  assert(imageMatch?.similarity >= .98, `wait.image WebP match failed: ${imageMatch?.similarity}`);
 
   setTimeout(() => mouse_button({ window: { wid: buttonWindow.wid }, click: "left" }), 120);
   const changedPixels = await wait({
@@ -501,9 +525,9 @@ try {
   assert(changedPixels?.changed > 0, "wait.change did not detect fixture update");
   check("wait.image and wait.change");
 
-  const save1 = `${temp}\\resource-1.png`;
-  const save2 = `${temp}\\resource-2.png`;
-  const stale = `${temp}\\stale.png`;
+  const save1 = `${temp}\\resource-1.webp`;
+  const save2 = `${temp}\\resource-2.webp`;
+  const stale = `${temp}\\stale.webp`;
   const scenarioTitle = `AAF SCENARIO [${token}]`;
   const results = await run([
     { window_find: { window: { wid: root.wid }, limit: 1 } },

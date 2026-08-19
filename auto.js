@@ -120,17 +120,9 @@ function ptrId(pointer) { return `0x${ptrValue(pointer).toString(16)}`; }
 function asPointer(value) {
   if (!value) return null;
   if (typeof value === "object") value = value.wid ?? value.hwnd ?? value.handle;
-  if (typeof value === "string") return Deno.UnsafePointer.create(BigInt(value));
-  if (typeof value === "number") return Deno.UnsafePointer.create(BigInt(value));
-  if (typeof value === "bigint") return Deno.UnsafePointer.create(value);
-  return value;
+  return ["string", "number", "bigint"].includes(typeof value) ? Deno.UnsafePointer.create(BigInt(value)) : value;
 }
-
-function wide(text, nul = false) {
-  const out = new Uint16Array(text.length + (nul ? 1 : 0));
-  for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i);
-  return out;
-}
+function wide(text, nul = false) { return Uint16Array.from({ length: text.length + (nul ? 1 : 0) }, (_, i) => text.charCodeAt(i) || 0); }
 
 function decodeWide(buffer, length = buffer.length) { return textDecoder16.decode(new Uint8Array(buffer.buffer, buffer.byteOffset, length * 2)); }
 
@@ -146,47 +138,19 @@ function windowClass(hwnd) { return readWide(hwnd, 512, user32.symbols.GetClassN
 function processPath(pid) {
   const handle = kernel32.symbols.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
   if (!handle) return "";
-  try {
-    const buffer = new Uint16Array(32768);
-    const size = new Uint32Array([buffer.length]);
-    if (!kernel32.symbols.QueryFullProcessImageNameW(handle, 0, buffer, size)) return "";
-    return decodeWide(buffer, size[0]);
-  } finally {
-    kernel32.symbols.CloseHandle(handle);
-  }
+  try { const buffer = new Uint16Array(32768), size = new Uint32Array([buffer.length]); return kernel32.symbols.QueryFullProcessImageNameW(handle, 0, buffer, size) ? decodeWide(buffer, size[0]) : ""; }
+  finally { kernel32.symbols.CloseHandle(handle); }
 }
 
 function displayRecords() {
-  const found = [];
-  const callback = new Deno.UnsafeCallback(
-    { parameters: ["pointer", "pointer", "pointer", "pointer"], result: "i32" },
-    (monitor) => {
-      const info = new Uint8Array(104);
-      const v = new DataView(info.buffer);
-      v.setUint32(0, 104, true);
-      if (!user32.symbols.GetMonitorInfoW(monitor, info)) return 1;
-
-      const bounds = viewRect(v, 4), work = viewRect(v, 20);
-      const device = decodeWide(new Uint16Array(info.buffer, 40, 32)).split("\0", 1)[0];
-      found.push({
-        id: device,
-        handle: ptrId(monitor),
-        primary: !!(v.getUint32(36, true) & 1),
-        ...bounds,
-        work,
-      });
-      return 1;
-    },
-  );
-
-  try {
-    if (!user32.symbols.EnumDisplayMonitors(null, null, callback.pointer, null)) {
-      throw new Error("EnumDisplayMonitors failed");
-    }
-  } finally {
-    callback.close();
-  }
-
+  const found = [], callback = new Deno.UnsafeCallback({ parameters: ["pointer", "pointer", "pointer", "pointer"], result: "i32" }, (monitor) => {
+    const info = new Uint8Array(104), view = new DataView(info.buffer); view.setUint32(0, 104, true);
+    if (!user32.symbols.GetMonitorInfoW(monitor, info)) return 1;
+    found.push({ id: decodeWide(new Uint16Array(info.buffer, 40, 32)).split("\0", 1)[0], handle: ptrId(monitor), primary: !!(view.getUint32(36, true) & 1), ...viewRect(view, 4), work: viewRect(view, 20) });
+    return 1;
+  });
+  try { if (!user32.symbols.EnumDisplayMonitors(null, null, callback.pointer, null)) throw new Error("EnumDisplayMonitors failed"); }
+  finally { callback.close(); }
   found.sort((a, b) => Number(b.primary) - Number(a.primary) || a.x - b.x || a.y - b.y);
   return found.map((display, index) => ({ index, ...display }));
 }
@@ -202,8 +166,7 @@ function resolveDisplay(display) {
   const list = displayRecords();
   if (!list.length) throw new Error("No displays found");
   if (display == null) return list[0];
-  if (typeof display === "object") display = display.index;
-  const index = Number(display);
+  const index = Number(typeof display === "object" ? display.index : display);
   if (!Number.isInteger(index) || !list[index]) throw new Error(`Display ${display} not found`);
   return list[index];
 }
@@ -224,55 +187,25 @@ function windowParent(hwnd) { return isChildWindow(hwnd) ? user32.symbols.GetAnc
 function windowOwner(hwnd) { return isChildWindow(hwnd) ? null : user32.symbols.GetWindow(hwnd, GW_OWNER); }
 
 function windowDepth(hwnd) {
-  let depth = 0;
-  let current = hwnd;
-  const seen = new Set();
+  let depth = 0, current = hwnd; const seen = new Set();
   while (current && isChildWindow(current) && depth < 256) {
-    const parent = user32.symbols.GetAncestor(current, GA_PARENT);
-    if (!parent) break;
-    const key = ptrId(parent).toLowerCase();
-    if (seen.has(key)) break;
-    seen.add(key);
-    depth++;
-    current = parent;
+    const parent = user32.symbols.GetAncestor(current, GA_PARENT), id = parent && ptrId(parent).toLowerCase();
+    if (!parent || seen.has(id)) break; seen.add(id); current = parent; depth++;
   }
   return depth;
 }
 
 function getWindowInfo(hwnd, monitors = displayMap()) {
   if (!hwnd) return null;
-  const pidOut = new Uint32Array(1);
-  const tid = user32.symbols.GetWindowThreadProcessId(hwnd, pidOut);
-  const pid = pidOut[0];
-  const rectBuffer = new Uint8Array(16);
-  const hasRect = !!user32.symbols.GetWindowRect(hwnd, rectBuffer);
-  const rect = hasRect ? rectFromBuffer(rectBuffer) : { x: 0, y: 0, width: 0, height: 0 };
-  const path = processPath(pid);
-  const monitor = user32.symbols.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-  const monitorId = monitor ? ptrId(monitor).toLowerCase() : "";
-  const display = monitors.get(monitorId);
-  const parent = windowParent(hwnd);
-  const owner = windowOwner(hwnd);
-
-  const minimized = !!user32.symbols.IsIconic(hwnd);
-  const maximized = !!user32.symbols.IsZoomed(hwnd);
-  const visible = !!user32.symbols.IsWindowVisible(hwnd);
-
+  const pidOut = new Uint32Array(1), tid = user32.symbols.GetWindowThreadProcessId(hwnd, pidOut), pid = pidOut[0], buffer = new Uint8Array(16);
+  const parent = windowParent(hwnd), owner = windowOwner(hwnd), monitor = user32.symbols.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+  const minimized = !!user32.symbols.IsIconic(hwnd), maximized = !!user32.symbols.IsZoomed(hwnd);
   return {
-    wid: ptrId(hwnd),
-    wpid: parent ? ptrId(parent) : null,
-    woid: owner ? ptrId(owner) : null,
-    depth: windowDepth(hwnd),
-    title: windowText(hwnd),
-    class: windowClass(hwnd),
-    pid,
-    bin: path,
-    display: display?.index ?? null,
-    rect,
-    status: minimized ? "minimized" : maximized ? "maximized" : "normal",
-    hidden: !visible,
-    foreground: ptrValue(user32.symbols.GetForegroundWindow()) === ptrValue(hwnd),
-    _tid: tid,
+    wid: ptrId(hwnd), wpid: parent ? ptrId(parent) : null, woid: owner ? ptrId(owner) : null, depth: windowDepth(hwnd),
+    title: windowText(hwnd), class: windowClass(hwnd), pid, bin: processPath(pid), display: monitors.get(monitor ? ptrId(monitor).toLowerCase() : "")?.index ?? null,
+    rect: user32.symbols.GetWindowRect(hwnd, buffer) ? rectFromBuffer(buffer) : { x: 0, y: 0, width: 0, height: 0 },
+    status: minimized ? "minimized" : maximized ? "maximized" : "normal", hidden: !user32.symbols.IsWindowVisible(hwnd),
+    foreground: ptrValue(user32.symbols.GetForegroundWindow()) === ptrValue(hwnd), _tid: tid,
   };
 }
 
@@ -289,8 +222,7 @@ function regexMatch(value, pattern) {
 function normalizeWindowFilter(filter) {
   if (filter == null) return {};
   if (typeof filter === "string") return filter.startsWith("0x") ? { wid: filter } : { title: filter };
-  if (typeof filter === "number" || typeof filter === "bigint") return { wid: ptrId(asPointer(filter)) };
-  return filter;
+  return typeof filter === "number" || typeof filter === "bigint" ? { wid: ptrId(asPointer(filter)) } : filter;
 }
 
 function own(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
@@ -309,39 +241,19 @@ function matchesFields(record, filter, rules) {
 
 function relationSpec(spec, defaultDomain) {
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) return null;
-  let depth = 1;
-  if (spec.depth != null) {
-    if (String(spec.depth).toLowerCase() === "all") depth = Infinity;
-    else {
-      depth = Number(spec.depth);
-      if (!Number.isInteger(depth) || depth < 1) return null;
-    }
-  }
-
-  const hasWindow = own(spec, "window");
-  const hasA11y = own(spec, "a11y");
-  if (hasWindow && hasA11y) return null;
-
-  if (hasWindow || hasA11y) {
-    const domain = hasWindow ? "window" : "a11y";
-    return { depth, domain, filter: spec[domain] ?? {} };
-  }
-
-  const filter = { ...spec };
-  delete filter.depth;
-  return { depth, domain: defaultDomain, filter };
+  let depth = spec.depth == null ? 1 : String(spec.depth).toLowerCase() === "all" ? Infinity : Number(spec.depth);
+  if (depth !== Infinity && (!Number.isInteger(depth) || depth < 1)) return null;
+  const window = own(spec, "window"), a11y = own(spec, "a11y");
+  if (window && a11y) return null;
+  if (window || a11y) { const domain = window ? "window" : "a11y"; return { depth, domain, filter: spec[domain] ?? {} }; }
+  const filter = { ...spec }; delete filter.depth; return { depth, domain: defaultDomain, filter };
 }
 
 function windowTree(records) {
-  const byWid = new Map();
-  const children = new Map();
+  const byWid = new Map(), children = new Map();
   for (const record of records) {
     byWid.set(record.wid.toLowerCase(), record);
-    if (record.wpid) {
-      const key = record.wpid.toLowerCase();
-      if (!children.has(key)) children.set(key, []);
-      children.get(key).push(record);
-    }
+    if (record.wpid) { const key = record.wpid.toLowerCase(); if (!children.has(key)) children.set(key, []); children.get(key).push(record); }
   }
   return { byWid, children };
 }
@@ -406,10 +318,7 @@ function windowRecords(filter = {}) {
   return records.filter((window) => matchesWindow(window, filter, tree));
 }
 
-function findLimit(limit) {
-  if (limit == null || limit === 0) return Infinity;
-  return Number.isInteger(limit) && limit > 0 ? limit : null;
-}
+function findLimit(limit) { return limit == null || limit === 0 ? Infinity : Number.isInteger(limit) && limit > 0 ? limit : null; }
 
 export function window_find({ window = {}, limit = 0 } = {}) {
   const max = findLimit(limit);
@@ -544,127 +453,57 @@ export async function window_set({ window = {}, title, frame, topmost, opacity, 
 }
 
 export function window_hit({ pos, display, child = false } = {}) {
-  const cursor = new Int32Array(2);
-  if (!user32.symbols.GetCursorPos(cursor)) return null;
-  const from = { x: cursor[0], y: cursor[1] };
-  const geometry = geometryContext(null, display);
-  let relative = from;
-  if (display != null || pos?.at != null) relative = geometryAnchor(geometry, pos?.at, geometry.display);
-  const fallback = pos?.at == null ? from : relative;
-  const p = resolvePos(pos, relative, geometry, fallback);
-  const packed = (BigInt(p.y >>> 0) << 32n) | BigInt(p.x >>> 0);
-  let hwnd = user32.symbols.WindowFromPoint(packed);
+  const point = mouseTarget(null, display, pos)?.to;
+  if (!point) return null;
+  let hwnd = user32.symbols.WindowFromPoint((BigInt(point.y >>> 0) << 32n) | BigInt(point.x >>> 0));
   if (!hwnd) return null;
   if (!child) hwnd = user32.symbols.GetAncestor(hwnd, GA_ROOT) || hwnd;
   return publicWindow(getWindowInfo(hwnd));
 }
 
-const HIGHLIGHT_CLASS = "AAF.Highlight";
-const HIGHLIGHT_THICKNESS = 3;
-let highlightClass = 0;
-let highlightBrush = null;
-let highlightWndProc = null;
+const HIGHLIGHT_CLASS = "AAF.Highlight", HIGHLIGHT_THICKNESS = 3;
+let highlightClass = 0, highlightBrush = null, highlightWndProc = null;
 
 function ensureHighlightClass() {
   if (highlightClass) return;
   const instance = kernel32.symbols.GetModuleHandleW(null);
   if (!instance) throw new Error("GetModuleHandleW failed");
-  highlightBrush ??= gdi32.symbols.CreateSolidBrush(0x000000ff); // COLORREF red
+  highlightBrush ??= gdi32.symbols.CreateSolidBrush(255);
   if (!highlightBrush) throw new Error("CreateSolidBrush failed");
-
-  highlightWndProc ??= new Deno.UnsafeCallback(
-    { parameters: ["pointer", "u32", "usize", "isize"], result: "isize" },
-    (hwnd, message, wParam, lParam) => {
-      if (message === 0x0084) return -1n; // WM_NCHITTEST -> HTTRANSPARENT
-      return user32.symbols.DefWindowProcW(hwnd, message, wParam, lParam);
-    },
-  );
-
-  const name = wide(HIGHLIGHT_CLASS, true);
-  const wc = new Uint8Array(80);
-  const v = new DataView(wc.buffer);
-  v.setUint32(0, 80, true);
-  v.setBigUint64(8, Deno.UnsafePointer.value(highlightWndProc.pointer), true);
-  v.setBigUint64(24, Deno.UnsafePointer.value(instance), true);
-  v.setBigUint64(48, Deno.UnsafePointer.value(highlightBrush), true);
-  v.setBigUint64(64, Deno.UnsafePointer.value(Deno.UnsafePointer.of(name)), true);
-  highlightClass = user32.symbols.RegisterClassExW(wc);
-  if (!highlightClass) throw new Error("RegisterClassExW(highlight) failed");
+  highlightWndProc ??= new Deno.UnsafeCallback({ parameters: ["pointer", "u32", "usize", "isize"], result: "isize" },
+    (hwnd, message, wParam, lParam) => message === 0x84 ? -1n : user32.symbols.DefWindowProcW(hwnd, message, wParam, lParam));
+  const name = wide(HIGHLIGHT_CLASS, true), wc = new Uint8Array(80), view = new DataView(wc.buffer);
+  view.setUint32(0, 80, true); view.setBigUint64(8, ptrValue(highlightWndProc.pointer), true); view.setBigUint64(24, ptrValue(instance), true);
+  view.setBigUint64(48, ptrValue(highlightBrush), true); view.setBigUint64(64, ptrValue(Deno.UnsafePointer.of(name)), true);
+  if (!(highlightClass = user32.symbols.RegisterClassExW(wc))) throw new Error("RegisterClassExW(highlight) failed");
 }
 
 function createHighlightRect(rect) {
   if (!rect || rect.width <= 0 || rect.height <= 0) return [];
   ensureHighlightClass();
-  const name = wide(HIGHLIGHT_CLASS, true);
-  const title = wide("", true);
-  const exStyle = 0x00000008 | 0x00000020 | 0x00000080 | 0x08000000; // TOPMOST | TRANSPARENT | TOOLWINDOW | NOACTIVATE
-  const style = (0x80000000 | 0x10000000) >>> 0; // POPUP | VISIBLE
-  const x = Math.round(rect.x);
-  const y = Math.round(rect.y);
-  const width = Math.max(1, Math.round(rect.width));
-  const height = Math.max(1, Math.round(rect.height));
-  const t = Math.min(HIGHLIGHT_THICKNESS, width, height);
-  const segments = [
-    [x, y, width, t],
-    [x, y + height - t, width, t],
-    [x, y + t, t, Math.max(1, height - 2 * t)],
-    [x + width - t, y + t, t, Math.max(1, height - 2 * t)],
-  ];
-  const instance = kernel32.symbols.GetModuleHandleW(null);
-  const windows = [];
+  const x = Math.round(rect.x), y = Math.round(rect.y), width = Math.max(1, Math.round(rect.width)), height = Math.max(1, Math.round(rect.height));
+  const t = Math.min(HIGHLIGHT_THICKNESS, width, height), segments = [[x,y,width,t],[x,y+height-t,width,t],[x,y+t,t,Math.max(1,height-2*t)],[x+width-t,y+t,t,Math.max(1,height-2*t)]];
+  const instance = kernel32.symbols.GetModuleHandleW(null), name = wide(HIGHLIGHT_CLASS, true), title = wide("", true), windows = [];
   try {
     for (const [left, top, w, h] of segments) {
-      const hwnd = user32.symbols.CreateWindowExW(
-        exStyle,
-        name,
-        title,
-        style,
-        left,
-        top,
-        w,
-        h,
-        null,
-        null,
-        instance,
-        null,
-      );
+      const hwnd = user32.symbols.CreateWindowExW(0x080000a8, name, title, 0x90000000, left, top, w, h, null, null, instance, null);
       if (!hwnd) throw new Error("CreateWindowExW(highlight) failed");
-      windows.push(hwnd);
-      user32.symbols.UpdateWindow(hwnd);
+      windows.push(hwnd); user32.symbols.UpdateWindow(hwnd);
       const dc = user32.symbols.GetDC(hwnd);
-      if (dc) {
-        try {
-          user32.symbols.FillRect(dc, new Int32Array([0, 0, w, h]), highlightBrush);
-        } finally {
-          user32.symbols.ReleaseDC(hwnd, dc);
-        }
-      }
+      if (dc) { user32.symbols.FillRect(dc, new Int32Array([0, 0, w, h]), highlightBrush); user32.symbols.ReleaseDC(hwnd, dc); }
     }
     return windows;
-  } catch (error) {
-    for (const hwnd of windows) user32.symbols.DestroyWindow(hwnd);
-    throw error;
-  }
+  } catch (error) { for (const hwnd of windows) user32.symbols.DestroyWindow(hwnd); throw error; }
 }
 
 export async function highlight({ window, a11y, duration = 800 } = {}) {
   if ((window == null) === (a11y == null)) return null;
-
-  const target = window != null ? window_get({ window }) : a11y_find({ a11y })[0];
+  const target = window != null ? window_get({ window }) : a11y_find({ a11y, limit: 1 })[0];
   if (!target?.rect) return null;
   const overlays = createHighlightRect(target.rect);
   if (!overlays.length) return null;
-  try {
-    await delay(timeMs(duration, 800));
-  } finally {
-    for (const hwnd of overlays) user32.symbols.DestroyWindow(hwnd);
-  }
-
-  return {
-    ...(target.wid ? { wid: target.wid } : {}),
-    ...(target.uid ? { uid: target.uid } : {}),
-    rect: target.rect,
-  };
+  try { await delay(timeMs(duration, 800)); } finally { for (const hwnd of overlays) user32.symbols.DestroyWindow(hwnd); }
+  return { ...(target.wid && { wid: target.wid }), ...(target.uid && { uid: target.uid }), rect: target.rect };
 }
 
 function captureArea(options = {}) {
@@ -1016,71 +855,42 @@ export async function keyb({ press, down, up, type, repeat = 1, interval = 0 } =
 }
 
 function openClipboard() {
-  for (let i = 0; i < 20; i++) {
-    if (user32.symbols.OpenClipboard(null)) return;
-    sleepSync(5);
-  }
+  for (let i = 0; i < 20; i++) { if (user32.symbols.OpenClipboard(null)) return; sleepSync(5); }
   throw new Error("OpenClipboard failed");
 }
-
+function withClipboard(fn) { openClipboard(); try { return fn(); } finally { user32.symbols.CloseClipboard(); } }
+function withGlobal(handle, fn) {
+  const pointer = kernel32.symbols.GlobalLock(handle);
+  if (!pointer) return null;
+  try { return fn(pointer); } finally { kernel32.symbols.GlobalUnlock(handle); }
+}
 function clipboardRead() {
   if (!user32.symbols.IsClipboardFormatAvailable(CF_UNICODETEXT)) return "";
-  openClipboard();
-  try {
+  return withClipboard(() => {
     const handle = user32.symbols.GetClipboardData(CF_UNICODETEXT);
-    if (!handle) return "";
-    const pointer = kernel32.symbols.GlobalLock(handle);
-    if (!pointer) return "";
-    try {
-      const view = new Deno.UnsafePointerView(pointer);
-      let length = 0;
-      while (view.getUint16(length * 2) !== 0) length++;
-      const bytes = new Uint8Array(view.getArrayBuffer(length * 2));
-      return textDecoder16.decode(bytes);
-    } finally {
-      kernel32.symbols.GlobalUnlock(handle);
-    }
-  } finally {
-    user32.symbols.CloseClipboard();
-  }
+    return handle ? withGlobal(handle, (pointer) => {
+      const view = new Deno.UnsafePointerView(pointer); let length = 0;
+      while (view.getUint16(length * 2)) length++;
+      return textDecoder16.decode(new Uint8Array(view.getArrayBuffer(length * 2)));
+    }) ?? "" : "";
+  });
 }
-
 function clipboardWrite(text) {
   text = String(text ?? "");
-  const data16 = wide(text, true);
-  const bytes = new Uint8Array(data16.buffer);
-  const handle = kernel32.symbols.GlobalAlloc(0x0002, bytes.byteLength);
+  const bytes = new Uint8Array(wide(text, true).buffer), handle = kernel32.symbols.GlobalAlloc(2, bytes.length);
   if (!handle) throw new Error("GlobalAlloc failed");
-  const pointer = kernel32.symbols.GlobalLock(handle);
-  if (!pointer) {
-    kernel32.symbols.GlobalFree(handle);
-    throw new Error("GlobalLock failed");
-  }
-  ntdll.symbols.RtlMoveMemory(pointer, bytes, bytes.byteLength);
-  kernel32.symbols.GlobalUnlock(handle);
-
-  openClipboard();
+  if (withGlobal(handle, (pointer) => { ntdll.symbols.RtlMoveMemory(pointer, bytes, bytes.length); return true; }) !== true) { kernel32.symbols.GlobalFree(handle); throw new Error("GlobalLock failed"); }
   let transferred = false;
   try {
-    if (!user32.symbols.EmptyClipboard()) throw new Error("EmptyClipboard failed");
-    if (!user32.symbols.SetClipboardData(CF_UNICODETEXT, handle)) throw new Error("SetClipboardData failed");
-    transferred = true;
-  } finally {
-    user32.symbols.CloseClipboard();
-    if (!transferred) kernel32.symbols.GlobalFree(handle);
-  }
+    withClipboard(() => {
+      if (!user32.symbols.EmptyClipboard()) throw new Error("EmptyClipboard failed");
+      if (!user32.symbols.SetClipboardData(CF_UNICODETEXT, handle)) throw new Error("SetClipboardData failed");
+      transferred = true;
+    });
+  } finally { if (!transferred) kernel32.symbols.GlobalFree(handle); }
   return { length: text.length };
 }
-
-function clipboardClear() {
-  openClipboard();
-  try {
-    if (!user32.symbols.EmptyClipboard()) throw new Error("EmptyClipboard failed");
-  } finally {
-    user32.symbols.CloseClipboard();
-  }
-  return true;
-}
+function clipboardClear() { return withClipboard(() => { if (!user32.symbols.EmptyClipboard()) throw new Error("EmptyClipboard failed"); return true; }); }
 
 export function clipboard(options = {}) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;

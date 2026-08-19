@@ -1070,7 +1070,7 @@ function captureArea(options = {}) {
   if (options.window != null && !info) return null;
   if (options.rect) {
     const geometry = geometryContext(info, options.display),
-      base = info?.rect ?? geometry.display;
+      base = info?.rect ?? geometry.D;
     const rect = base && resolveRect(options.rect, base, geometry);
     return rect && rect.width > 0 && rect.height > 0
       ? { kind: "screen", ...rect }
@@ -1219,21 +1219,21 @@ function mouseInput(flags, data = 0) {
 }
 
 function geometryContext(info, display) {
-  const explicitDisplay = display == null ? null : resolveDisplay(display);
+  const displays = displayRecords();
+  const displayIndex = display == null
+    ? null
+    : Number(typeof display === "object" ? display.index : display);
+  const explicitDisplay = Number.isInteger(displayIndex)
+    ? displays[displayIndex] ?? null
+    : null;
   return {
-    window: info?.rect ?? null,
-    client: info ? clientRect(asPointer(info.wid)) : null,
-    display: explicitDisplay ??
-      (info?.display != null ? resolveDisplay(info.display) : null) ??
-      resolveDisplay(),
+    W: info?.rect ?? null,
+    WC: info ? clientRect(asPointer(info.wid)) : null,
+    D: explicitDisplay ??
+      (info?.display != null ? displays[info.display] : null) ??
+      displays[0] ?? null,
     explicitDisplay,
   };
-}
-
-function geometryReference(context, suffix) {
-  return ({ W: context.window, WC: context.client, D: context.display })[
-    (suffix || (context.window ? "W" : "D")).toUpperCase()
-  ] ?? null;
 }
 const GEOMETRY_VALUE = /^([+-]?)(\d+(?:\.\d*)?|\.\d+)(%?)(WC|W|D)?$/i;
 function geometryValue(value, axis, current, context, size = false) {
@@ -1246,7 +1246,7 @@ function geometryValue(value, axis, current, context, size = false) {
   if (!match) return round(current);
   const [, sign, amount, percent, suffix] = match, n = Number(amount);
   if (percent) {
-    const ref = geometryReference(context, suffix);
+    const ref = context[(suffix || (context.W ? "W" : "D")).toUpperCase()];
     if (!ref) return round(current);
     const delta = n / 100 * (axis === "x" ? ref.width : ref.height);
     return round(
@@ -1258,7 +1258,7 @@ function geometryValue(value, axis, current, context, size = false) {
     );
   }
   if (suffix && !sign) {
-    const ref = geometryReference(context, suffix);
+    const ref = context[(suffix || (context.W ? "W" : "D")).toUpperCase()];
     return ref ? round(size ? n : ref[axis] + n) : round(current);
   }
   return sign && !suffix
@@ -1299,7 +1299,7 @@ function anchorSpec(at) {
 
 function geometryAnchor(context, at, fallback) {
   const { factors: [fx, fy], suffix } = anchorSpec(at),
-    rect = (suffix && geometryReference(context, suffix)) || fallback;
+    rect = (suffix && context[suffix]) || fallback;
   return { x: rect.x + rect.width * fx, y: rect.y + rect.height * fy };
 }
 
@@ -1369,7 +1369,7 @@ function mouseTarget(info, display, pos, defaultAt) {
   const target = defaultAt ? { at: defaultAt, ...(pos ?? {}) } : pos,
     geometry = geometryContext(info, display);
   const rect = info?.rect ??
-    (display != null || target?.at != null ? geometry.display : null);
+    (display != null || target?.at != null ? geometry.D : null);
   const relative = rect ? geometryAnchor(geometry, target?.at, rect) : from;
   return {
     from,

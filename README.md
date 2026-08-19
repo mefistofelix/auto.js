@@ -8,8 +8,8 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 
 ## Features
 
-- native window discovery, filtering, tree relations, geometry, control, mutation, hit testing, and live text
-- Windows UI Automation accessibility discovery/actions and window/accessibility cross-relations
+- native window discovery, filtering, geometry, control, mutation, and hit testing
+- native accessibility discovery/actions through Windows UI Automation or macOS AX
 - display discovery and W / WC / D coordinate references
 - physical and direct-target mouse input, including independent human-like movement path/timing and owned-input recovery
 - keyboard press/down/up/type, repeated presses, active-layout character mapping, and human/random timing
@@ -23,7 +23,7 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 ## Requirements
 
 - Windows x64 for the complete current regression suite
-- macOS for the Darwin backend as capabilities are implemented
+- macOS for the Darwin backend
 - Deno
 - network access on first dependency resolution for `npm:sharp`
 
@@ -113,4 +113,6 @@ AGENTS.md              implementation and project rules
 
 AutoJS intentionally favors a small distribution and direct operating-system APIs over abstraction layers. Primitive actions are stateless; `run()` adds only explicit per-scenario `prev`, `state`, and run-scoped resource lifetime, then returns `{results, state}` and transfers final-state image resources to the caller.
 
-`auto.js` selects the native backend from `Deno.build.os`. The backend boundary stays at the automation primitive level so unsupported operating-system capabilities can return no result instead of being emulated with misleading semantics.
+`auto.js` selects the native backend from `Deno.build.os`. The backend boundary stays direct and functional: unsupported operating-system capabilities return no result instead of being emulated with misleading semantics.
+
+The Darwin backend currently maps displays and Quartz windows, AX accessibility/actions and window move/size/focus/minimize/restore/close, physical mouse and keyboard input, text selection, clipboard, screenshots through the legacy Quartz capture API when present, and power wake/awake assertions. macOS has no fake native-child HWND tree or direct-window mouse posting here; `WC`, native class/owner fields, frame/topmost/opacity mutation, lock-state detection, and OCR currently return unavailable/null semantics rather than approximations.

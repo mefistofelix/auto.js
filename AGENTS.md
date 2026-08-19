@@ -197,7 +197,7 @@ On the current Windows backend, `a11y` is implemented with Windows UI Automation
 
 Implementation stays dependency-free: instantiate `CUIAutomation` through COM, use `ElementFromHandle` and the Control View `IUIAutomationTreeWalker`, read current element properties directly from `IUIAutomationElement`, and use RuntimeId only as an opaque current identity. Caching COM automation/walker interfaces is infrastructure only; never cache selectors, resolved elements, RuntimeIds, or scenario state across actions.
 
-AAF itself is platform-agnostic even though `auto.js` currently implements Windows x64 only. Future backends should map `window` to their native window system and `a11y` to the platform accessibility tree (for example AX on macOS or AT-SPI on Linux). Backend-specific fields such as owner IDs, direct-target mouse injection, native class names, frame/topmost/opacity mutations, or rich native parent trees are optional capabilities: never emulate an unavailable capability with misleading semantics.
+AAF itself is platform-agnostic. Windows maps `window` to Win32 and `a11y` to UI Automation; macOS maps `window` to Quartz Window Services plus AX window operations and `a11y` to the AX accessibility tree. Backend-specific fields such as owner IDs, direct-target mouse injection, native class names, frame/topmost/opacity mutations, client rectangles, or rich native parent trees are optional capabilities: never emulate an unavailable capability with misleading semantics. On Darwin, unsupported fields stay `null`, unsupported filters/actions produce no match/result, and explicit `WC` geometry is unavailable rather than silently treated as `W`.
 
 ## Displays and coordinates
 

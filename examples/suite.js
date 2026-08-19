@@ -149,12 +149,11 @@ const {
   window_control,
   window_set,
   window_hit,
-  highlight,
   mouse_move,
   mouse_button,
   keyb,
+  input_sel,
   input_reset,
-  selection,
   clipboard,
   ocr,
   wait,
@@ -216,7 +215,7 @@ let awake = false;
 try {
   const session = system();
   assert(typeof session.locked === "boolean", "system lock-state detection failed");
-  same((await run([{ system: {} }]))[0]?.locked, session.locked, "scenario system query failed");
+  same((await run([{ system: {} }])).results[0]?.locked, session.locked, "scenario system query failed");
   same(system({ wake: true })?.wake, true, "system wake failed");
   same(system({ awake: true })?.awake, true, "system awake:true failed");
   awake = true;
@@ -250,9 +249,9 @@ try {
   same(window_find({ window: { wid: root.wid, zorder: root.zorder }, limit: 1 })[0]?.wid, root.wid, "window zorder filter failed");
   same(window_get({ window: { wid: editWindow.wid }, text: true })?.text, EDIT_INITIAL, "window_get edit text failed");
   same(window_get({ window: { wid: statusWindow.wid }, text: true })?.text, `${STATUS_PREFIX} 0`, "window_get label text failed");
-  same((await run([{ window_get: { window: { wid: editWindow.wid }, text: true } }]))[0]?.text, EDIT_INITIAL, "scenario window_get text failed");
-  same(selection({ window: { wid: editWindow.wid }, read: true }), "EDIT", "selection read failed");
-  same((await run([{ selection: { window: { wid: editWindow.wid }, read: true } }]))[0], "EDIT", "scenario selection read failed");
+  same((await run([{ window_get: { window: { wid: editWindow.wid }, text: true } }])).results[0]?.text, EDIT_INITIAL, "scenario window_get text failed");
+  same(input_sel({ window: { wid: editWindow.wid }, read: true }), "EDIT", "input_sel read failed");
+  same((await run([{ input_sel: { window: { wid: editWindow.wid }, read: true } }])).results[0], "EDIT", "scenario input_sel read failed");
   assert(nestedWindow.depth >= 2, "nested native depth was not preserved");
   same(
     window_find({ window: { wid: root.wid, down: { class: "^Button$", depth: "all" } }, limit: 1 })[0]?.wid,
@@ -288,7 +287,7 @@ try {
   await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === a11ySetText, "a11y set did not update edit text");
   a11y_action({ a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL });
   await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === EDIT_INITIAL, "a11y set did not restore edit text");
-  same((await run([{ a11y_action: { a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL } }]))[0]?.action, "set", "scenario a11y_action failed");
+  same((await run([{ a11y_action: { a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL } }])).results[0]?.action, "set", "scenario a11y_action failed");
   same(
     window_find({
       window: {
@@ -302,12 +301,12 @@ try {
   );
   check("a11y filters, capabilities, actions, limit, cross-domain relations");
 
-  same(selection({ window: { wid: editWindow.wid }, write: "Z" })?.length, 1, "selection write failed");
+  same(input_sel({ window: { wid: editWindow.wid }, write: "Z" })?.length, 1, "input_sel write failed");
   const selectionWritten = window_get({ window: { wid: editWindow.wid }, text: true })?.text;
-  assert(selectionWritten?.includes("Z") && selectionWritten !== EDIT_INITIAL, "selection write did not replace/insert at the current selection");
+  assert(selectionWritten?.includes("Z") && selectionWritten !== EDIT_INITIAL, "input_sel write did not replace/insert at the current selection");
   a11y_action({ a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL });
   await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === EDIT_INITIAL, "selection test did not restore edit text");
-  check("text selection read/write");
+  check("input_sel read/write");
 
   assert(await window_wait({ window: { wid: root.wid }, timeout: 500, interval: 20 }), "window_wait failed");
   assert(await wait({ window: { wid: root.wid }, timeout: 0 }), "wait.window immediate match failed");
@@ -362,11 +361,10 @@ try {
     topmost: false,
     opacity: 1,
     enabled: true,
+    highlight: 30,
   });
   root = window_get({ window: { wid: root.wid } });
-  await highlight({ window: { wid: root.wid }, duration: 30 });
-  await highlight({ a11y: { uid: a11yButton.uid }, duration: 30 });
-  check("window_set and highlight(window/a11y)");
+  check("window_set + highlight");
 
   await window_set({ window: { wid: root.wid }, topmost: true });
   window_control({ window: { wid: root.wid }, action: "focus" });
@@ -390,7 +388,7 @@ try {
   const clientPoint = await mouse_move({ window: { wid: root.wid }, pos: { at: "centerWC", x: "+10", y: "-10" } });
   assert(clientPoint?.pos, "mouse_move WC geometry failed");
   const humanTarget = { x: clientPoint.pos.x + 12, y: clientPoint.pos.y + 8 };
-  const humanPoint = await mouse_move({ pos: humanTarget, duration: 40, path: "user()" });
+  const humanPoint = await mouse_move({ pos: humanTarget, duration: 40, path: "user" });
   same(humanPoint?.pos.x, humanTarget.x, "user mouse path x destination failed");
   same(humanPoint?.pos.y, humanTarget.y, "user mouse path y destination failed");
   let clicks = 0;
@@ -433,7 +431,7 @@ try {
   same(wheel?.wheel, 1, "direct-target mouse wheel failed");
   const hwheel = mouse_button({ window: { wid: root.wid }, hwheel: 1 });
   same(hwheel?.hwheel, 1, "direct-target horizontal mouse wheel failed");
-  same((await run([{ mouse_button: { window: { wid: nestedWindow.wpid }, down: "left" } }]))[0]?.down, "left", "scenario mouse hold failed");
+  same((await run([{ mouse_button: { window: { wid: nestedWindow.wpid }, down: "left" } }])).results[0]?.down, "left", "scenario mouse hold failed");
   same(input_reset().released, 0, "run did not implicitly reset direct mouse hold");
   check("mouse_button direct click/wheel/hwheel + run reset");
 
@@ -467,8 +465,8 @@ try {
     same(mapped.press[0], "@", "layout-mapped key press failed");
     const finalText = `${shortened}@`;
     await eventually(() => editValue() === finalText, "layout-mapped @ did not reach fixture edit");
-    const timed = await run([{ state: { timingText: "XY" } }, { keyb: { type: "$.state.timingText", duration: "rand($action.type.len*10)" } }]);
-    same(timed[1]?.typed, 2, "$action timing expression failed after scenario normalization");
+    const timed = (await run([{ state: { timingText: "XY" } }, { keyb: { type: "$.state.timingText", duration: "rand($.curr.type.len*10)" } }])).results;
+    same(timed[1]?.typed, 2, "$.curr timing expression failed after scenario normalization");
     await eventually(() => editValue() === `${finalText}XY`, "timed scenario typing did not reach fixture edit");
     await keyb({ press: "backspace", repeat: 2 });
     const priorityStart = performance.now(), priority = await keyb({ type: "ZZ", duration: 0, interval: 1000 });
@@ -485,9 +483,13 @@ try {
     same(up.up[0], "shift", "keyb up failed");
     const held = await keyb({ down: "ctrl" });
     same(held.down[0], "ctrl", "keyb held input for reset failed");
+    same((await run([{ input_reset: {} }])).results[0]?.released, 0, "scenario input_reset must preserve pre-existing held input");
     assert(input_reset().released >= 1, "input_reset did not release held keyboard input");
-    same((await run([{ input_reset: {} }]))[0]?.released, 0, "scenario input_reset failed");
-    same((await run([{ keyb: { down: "shift" } }]))[0]?.down?.[0], "shift", "scenario held key failed");
+    const earlyReset = await run([{ keyb: { down: "shift" } }, { input_reset: {} }]);
+    same(earlyReset.results[0]?.down?.[0], "shift", "scenario held key failed");
+    same(earlyReset.results[1]?.released, 1, "scenario input_reset did not release run-owned input");
+    same(input_reset().released, 0, "scenario input_reset leaked held keyboard input");
+    same((await run([{ keyb: { down: "shift" } }])).results[0]?.down?.[0], "shift", "scenario held key cleanup setup failed");
     same(input_reset().released, 0, "run did not implicitly reset held keyboard input");
     await eventually(() => editValue() === finalText, "final keyboard text did not remain in fixture edit");
     check("keyb press/type/down/up/repeat/layout mapping/timing + input_reset");
@@ -499,11 +501,11 @@ try {
   const fullPng = `${temp}\\full.png`;
   const immediate = (await run([{
     screenshot: { window: { wid: root.wid }, save: fullPng },
-  }]))[0];
+  }])).results[0];
   assert(immediate?.bytes > 0 && immediate.path === fullPng, "screenshot immediate save failed");
   same(immediate.format, "png", "PNG extension inference failed");
   const defaultImage = `${temp}\\default-codec`;
-  const defaultSaved = (await run([{ screenshot: { window: { wid: root.wid }, save: defaultImage } }]))[0];
+  const defaultSaved = (await run([{ screenshot: { window: { wid: root.wid }, save: defaultImage } }])).results[0];
   same(defaultSaved?.format, "webp", "default screenshot codec must be WebP");
   const defaultBytes = await Deno.readFile(defaultImage);
   same(new TextDecoder().decode(defaultBytes.subarray(0, 4)), "RIFF", "default WebP signature missing");
@@ -521,7 +523,7 @@ try {
   const templateWebp = `${temp}\\template.webp`;
   const template = (await run([{
     screenshot: { window: { wid: root.wid }, save: templateWebp },
-  }]))[0];
+  }])).results[0];
   assert(template?.bytes > 0 && template.format === "webp", "default WebP screenshot failed");
   const imageMatch = await wait({
     image: { path: templateWebp, window: { wid: root.wid } },
@@ -539,31 +541,42 @@ try {
   assert(changedPixels?.changed > 0, "wait.change did not detect fixture update");
   check("wait.image and wait.change");
 
+  const refs = await run([
+    { window_find: { window: { wid: root.wid }, limit: 1 } },
+    { state: { retWid: "$.ret[0].wid", prevWid: "$.prev.window.wid", prevLimit: "$.prev.limit" } },
+    { state: { retWidAgain: "$.ret[0].wid", prevWidAgain: "$.prev.window.wid" } },
+  ]);
+  same(refs.results[1].retWid, root.wid, "$.ret did not expose the previous return value");
+  same(refs.results[1].prevWid, root.wid, "$.prev did not expose the previous resolved input");
+  same(refs.results[1].prevLimit, 1, "$.prev input fields were not preserved");
+  same(refs.results[2].retWidAgain, root.wid, "state unexpectedly changed $.ret");
+  same(refs.results[2].prevWidAgain, root.wid, "state unexpectedly changed $.prev");
+
   const save1 = `${temp}\\resource-1.webp`;
   const save2 = `${temp}\\resource-2.webp`;
   const stale = `${temp}\\stale.webp`;
   const scenarioTitle = `AAF SCENARIO [${token}]`;
-  const results = await run([
+  const { results, state: scenarioState } = await run([
     { window_find: { window: { wid: root.wid }, limit: 1 } },
     {
       state: {
-        target: "$.prev[0]",
+        target: "$.ret[0]",
         expected: scenarioTitle,
-        "meta.pid": "$.prev[0].pid",
-        "&history": "$.prev[0]",
+        "meta.pid": "$.ret[0].pid",
+        "&history": "$.ret[0]",
       },
     },
     { window_set: { window: { wid: "$.state.target.wid" }, title: "<<$.state.expected>>" } },
     { window_find: { window: { title: "^<<$.state.expected|re>>$" }, limit: 1 } },
-    { state: { matched: "$.prev[0]", "-": ["meta.pid"] } },
+    { state: { matched: "$.ret[0]", "-": ["meta.pid"] } },
     { screenshot: { window: { wid: "$.state.target.wid" } } },
-    { state: { shot: "$.prev.image", backup: "$.prev.image" } },
+    { state: { shot: "$.ret.image", backup: "$.ret.image" } },
     { screenshot_save: { image: "$.state.shot", save: save1 } },
     { ocr: { image: "$.state.shot" } },
     { state: { "-": ["shot"] } },
     { screenshot_save: { image: "$.state.backup", save: save2 } },
     { state: { "-": ["backup"] } },
-    { screenshot_save: { image: "$.prev.image", save: stale } },
+    { screenshot_save: { image: "$.ret.image", save: stale } },
   ]);
 
   same(results[0][0].wid, root.wid, "scenario window_find failed");
@@ -579,15 +592,28 @@ try {
   const bytes2 = await Deno.readFile(save2);
   same(bytes1.length, bytes2.length, "resource saves differ in size");
   assert(bytes1.every((value, index) => value === bytes2[index]), "screenshot_save recaptured or changed resource bytes");
+  same(scenarioState.matched.title, scenarioTitle, "run final state missing scenario data");
 
-  const diagnostics = await run([
+  const returned = await run([
+    { screenshot: { window: { wid: root.wid } } },
+    { state: { shot: "$.ret.image", alias: "$.ret.image" } },
+  ]);
+  const returnedImage = returned.state.shot;
+  assert(returnedImage?.format === "png" && returnedImage.data instanceof Uint8Array, "run final state did not materialize PNG image resource");
+  assert(returnedImage.data.length > 0 && returnedImage.data.length < returnedImage.rect.width * returnedImage.rect.height * 4, "returned PNG image was not compacted");
+  assert(returned.state.alias === returnedImage, "duplicate final state image references should share one resource object");
+  same(returned.results[1].shot, returned.results[0].image, "scenario state step should still expose the internal image handle");
+  const returnedOcr = await ocr({ image: returnedImage });
+  assert(returnedOcr?.text?.replace(/\s+/g, " ").toUpperCase().includes("IMAGE MARKER 7391"), "OCR could not consume returned PNG image resource");
+
+  const diagnostics = (await run([
     { window_find: { window: { wid: "$.state.missing" }, limit: 1 } },
     { state: { "bad path": 1 } },
     { unknown_action: {} },
     {},
     { keyb: { press: "a", repeat: 0 } },
     { display_find: { display: { index: 0 } } },
-  ]);
+  ])).results;
   same(diagnostics[0]?.error, "unresolved reference", "missing scenario reference should be diagnosed");
   same(diagnostics[0]?.path, "$.state.missing", "reference diagnostic should include the path");
   same(diagnostics[1]?.error, "invalid state path", "invalid state path should be diagnosed");
@@ -599,11 +625,10 @@ try {
   same(diagnostics[4]?.action, "keyb", "runtime diagnostic should identify the action");
   assert(diagnostics[4]?.message?.includes("Invalid repeat"), "runtime diagnostic should preserve the concise cause");
   same(diagnostics[5].length, 1, "run should continue after diagnosed failures");
-  same((await run({}))[0]?.error, "invalid scenario", "non-array scenario should be diagnosed");
-  check("run, prev/state, diagnostics, interpolation, push/delete, image resource lifetime");
+  same((await run({})).results[0]?.error, "invalid scenario", "non-array scenario should be diagnosed");
+  check("run curr/prev/ret/state, diagnostics, interpolation, push/delete, image resource lifetime");
 
-  await window_set({ window: { wid: root.wid }, title: `AAF TEST FIXTURE ${token}` });
-  await highlight({ window: { wid: root.wid }, duration: 20 });
+  await window_set({ window: { wid: root.wid }, title: `AAF TEST FIXTURE ${token}`, highlight: 20 });
   check("all verification groups passed");
 } finally {
   try {

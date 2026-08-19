@@ -16,7 +16,7 @@ import {
 const TEST_TEXT = "AUTO OCR TEST 48291";
 const STEP_DELAY = 1200;
 const pause = (label) => (console.log(`\n--- ${label} ---`), wait({ ms: STEP_DELAY }));
-const saveShot = async (options) => (await run([{ screenshot: options }]))[0];
+const saveShot = async (options) => (await run([{ screenshot: options }])).results[0];
 const before = new Set(window_find({ window: { bin: "notepad\\.exe$", class: "^Notepad$" } }).map((w) => w.wid));
 new Deno.Command("notepad.exe").spawn();
 

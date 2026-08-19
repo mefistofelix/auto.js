@@ -13,8 +13,8 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 - display discovery and W / WC / D coordinate references
 - physical and direct-target mouse input, including independent human-like movement path/timing and owned-input recovery
 - keyboard press/down/up/type, repeated presses, active-layout character mapping, and human/random timing
-- focused/targeted text-selection read/write plus clipboard read/write/clear
-- screenshots with WebP default and PNG support, retained scenario image resources, and screenshot reuse
+- `input_sel` focused/targeted text-selection read/write plus clipboard read/write/clear
+- screenshots with WebP default and PNG support, retained scenario image resources, screenshot reuse, and caller-owned final-state images
 - Windows-native OCR through WinRT
 - polling waits for windows, OCR, images, and visual changes
 - explicit scenario `state`, references, interpolation, push/delete operations, and resource lifetime
@@ -63,7 +63,7 @@ The same primitives can be represented as JSON/YAML-compatible actions and execu
     limit: 1
 
 - state:
-    target: "$.prev[0]"
+    target: "$.ret[0]"
 
 - window_control:
     window: { wid: "$.state.target.wid" }
@@ -80,13 +80,15 @@ The same primitives can be represented as JSON/YAML-compatible actions and execu
       window: { wid: "$.state.target.wid" }
 ```
 
+`run(actions)` returns `{results, state}`. `results` contains one value per action; `state` is the final scenario state. Images deliberately retained in that final state are returned to JavaScript as compact lossless PNG resource objects (`{format, rect, grayscale, data}`) instead of dead run-scoped handle strings; direct `ocr({image})` can consume them again.
+
 See [`AAF_SPEC.md`](AAF_SPEC.md) for the complete AAF specification.
 
 ## Verification suite
 
 `examples/suite.js` is the primary regression suite. It creates its own private Win32 fixture process and controls that fixture instead of relying on pre-existing desktop state.
 
-It verifies windows, accessibility/actions, relations, limits, geometry, mouse, keyboard, `rand($action...)` / `user()` timing, input recovery, clipboard, text selection, WebP/PNG screenshots, OCR, waits, scenario state/resources, system/session helpers, and cross-process window text reads.
+It verifies windows, accessibility/actions, relations, limits, geometry, mouse, keyboard, `rand($.curr...)` / `user()` timing, input recovery, clipboard, `input_sel`, WebP/PNG screenshots, OCR, waits, scenario state/resources, system/session helpers, and cross-process window text reads.
 
 ```text
 deno run -A examples/suite.js
@@ -107,6 +109,6 @@ AGENTS.md              implementation and project rules
 
 ## Design goals
 
-AutoJS intentionally favors a small distribution and direct operating-system APIs over abstraction layers. Primitive actions are stateless; `run()` adds only explicit per-scenario `prev`, `state`, and run-scoped resource lifetime.
+AutoJS intentionally favors a small distribution and direct operating-system APIs over abstraction layers. Primitive actions are stateless; `run()` adds only explicit per-scenario `prev`, `state`, and run-scoped resource lifetime, then returns `{results, state}` and transfers final-state image resources to the caller.
 
 The current backend is Windows x64. AAF itself is designed so additional platform backends can map the same high-level domains to their native window and accessibility systems.

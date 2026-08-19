@@ -25,7 +25,7 @@ const WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00
 const SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOZORDER = 4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20, INPUT_MOUSE = 0, INPUT_KEYBOARD = 1, KEYEVENTF_EXTENDEDKEY = 1, KEYEVENTF_KEYUP = 2, KEYEVENTF_UNICODE = 4, MOUSEEVENTF_WHEEL = 0x0800, MOUSEEVENTF_HWHEEL = 0x1000, WHEEL_DELTA = 120;
 function sleepSync(ms) { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
 function timeAtom(value, action) {
-  const text = String(value).trim(), ref = text.match(/^\$action((?:\.[A-Za-z_][A-Za-z0-9_-]*)+)$/);
+  const text = String(value).trim(), ref = text.match(/^\$\.curr((?:\.[A-Za-z_][A-Za-z0-9_-]*)+)$/);
   if (ref) {
     let current = action;
     for (const key of ref[1].slice(1).split(".")) {
@@ -234,9 +234,9 @@ function focusedControl() {
   if (!user32.symbols.GetGUIThreadInfo(tid, info)) return null; const value = view.getBigUint64(16, true); return value ? asPointer(value) : null;
 }
 function selectionTarget(window) { if (window == null) return focusedControl(); const found = windowRecords(window)[0]; return found ? asPointer(found.wid) : null; }
-export function selection(options = {}) {
+export function input_sel(options = {}) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
-  const operations = ["read", "write"].filter((key) => own(options, key)); if (operations.length !== 1) throw new Error("selection requires exactly one of read, write");
+  const operations = ["read", "write"].filter((key) => own(options, key)); if (operations.length !== 1) throw new Error("input_sel requires exactly one of read, write");
   const hwnd = selectionTarget(options.window); if (!hwnd || !textControl(hwnd)) return null;
   if (operations[0] === "read") return options.read === true ? windowSelection(hwnd)?.text ?? null : null;
   const text = String(options.write ?? ""), data = wide(text, true); return sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(data)) == null ? null : { length: text.length };
@@ -295,11 +295,13 @@ function setWindowOpacity(hwnd, opacity) {
   const ex = user32.symbols.GetWindowLongW(hwnd, GWL_EXSTYLE) >>> 0; if (!(ex & WS_EX_LAYERED)) user32.symbols.SetWindowLongW(hwnd, GWL_EXSTYLE, (ex | WS_EX_LAYERED) | 0);
   return !!user32.symbols.SetLayeredWindowAttributes(hwnd, 0, Math.round(opacity * 255), LWA_ALPHA);
 }
-export async function window_set({ window = {}, title, frame, topmost, opacity, enabled, highlight: mark } = {}) {
+export async function window_set({ window = {}, title, frame, topmost, opacity, enabled, highlight } = {}) {
   const info = windowRecords(window)[0]; if (!info) return null; const hwnd = asPointer(info.wid);
   if (title != null) setWindowTitle(hwnd, title); if (frame != null) setWindowFrame(hwnd, frame); if (topmost != null) setWindowTopmost(hwnd, !!topmost);
   if (opacity != null) setWindowOpacity(hwnd, opacity); if (enabled != null) user32.symbols.EnableWindow(hwnd, enabled ? 1 : 0);
-  if (mark) await highlight({ window: { wid: info.wid }, duration: mark === true ? 800 : mark }); return window_get({ window: { wid: info.wid } });
+  const result = window_get({ window: { wid: info.wid } });
+  if (highlight && result?.rect) await highlightRect(result.rect, highlight === true ? 800 : highlight, { highlight });
+  return result;
 }
 export function window_hit({ pos, display, child = false } = {}) {
   const point = mouseTarget(null, display, pos)?.to;
@@ -341,15 +343,10 @@ function createHighlightRect(rect) {
     return windows;
   } catch (error) { for (const hwnd of windows) user32.symbols.DestroyWindow(hwnd); throw error; }
 }
-export async function highlight(options = {}) {
-  const { window, a11y, duration = 800 } = options;
-  if ((window == null) === (a11y == null)) return null;
-  const target = window != null ? window_get({ window }) : a11y_find({ a11y, limit: 1 })[0];
-  if (!target?.rect) return null;
-  const overlays = createHighlightRect(target.rect);
-  if (!overlays.length) return null;
-  try { await delay(timeMs(duration, 800, options)); } finally { for (const hwnd of overlays) user32.symbols.DestroyWindow(hwnd); }
-  return { ...(target.wid && { wid: target.wid }), ...(target.uid && { uid: target.uid }), rect: target.rect };
+async function highlightRect(rect, duration, action) {
+  const overlays = createHighlightRect(rect);
+  if (!overlays.length) return;
+  try { await delay(timeMs(duration, 800, action)); } finally { for (const hwnd of overlays) user32.symbols.DestroyWindow(hwnd); }
 }
 // Capture and PNG
 function captureArea(options = {}) {
@@ -502,6 +499,7 @@ function mouseTarget(info, display, pos, defaultAt) {
   const relative = rect ? geometryAnchor(geometry, target?.at, rect) : from;
   return { from, to: resolvePos(target, relative, geometry, target?.at == null ? from : relative) };
 }
+function userPath(value) { return typeof value === "string" && /^user$/i.test(value.trim()); }
 function userMousePath(from, to) {
   const dx = to.x - from.x, dy = to.y - from.y, distance = Math.hypot(dx,dy), length = distance || 1, nx = -dy / length, ny = dx / length;
   const bend = (Math.random() - .5) * Math.min(140, distance * .35), c1 = { x: from.x + dx * .3 + nx * bend, y: from.y + dy * .3 + ny * bend }, c2 = { x: from.x + dx * .72 - nx * bend * .35, y: from.y + dy * .72 - ny * bend * .35 };
@@ -512,7 +510,7 @@ export async function mouse_move(options = {}) {
   const { pos, display, duration: durationSpec = 0, path, steps: requestedSteps, window } = options, info = window == null ? null : windowRecords(window)[0], target = mouseTarget(info, display, pos);
   if (!target) return null;
   if (window != null && !info) return { pos: target.from };
-  const { from, to } = target, route = userTime(path) ? userMousePath(from,to) : null, duration = userTime(durationSpec) ? userMouseDuration(from,to) : timeMs(durationSpec, 0, options);
+  const { from, to } = target, route = userPath(path) ? userMousePath(from,to) : null, duration = userTime(durationSpec) ? userMouseDuration(from,to) : timeMs(durationSpec, 0, options);
   if (duration <= 0) return { pos: user32.symbols.SetCursorPos(to.x, to.y) ? to : from };
   const steps = requestedSteps ?? Math.max(2, Math.round(duration / 16));
   for (let i = 1; i <= steps; i++) {
@@ -865,8 +863,18 @@ async function asyncResult(operation) {
   const info=comQuery(operation,IID_IAsyncInfo); try { for (;;) { const status=comOut(info,7,Int32Array); checkHR(status.hr,"IAsyncInfo.Status"); const s=status.out[0]; if (s===1) break; if (s===2) throw new Error("WinRT operation canceled"); if (s===3) { const error=comOut(info,8,Int32Array).out[0]; throw new Error(`WinRT operation failed: HRESULT 0x${(error>>>0).toString(16)}`); } await wait(5); } return comPtr(operation,8,[],[],"IAsyncOperation.GetResults"); }
   finally { comRelease(info); }
 }
+async function imageBGRA(image) {
+  if (!image) return null;
+  if (image.format === "bgra8") return image;
+  if (!(image.data instanceof Uint8Array)) return null;
+  try {
+    const { data, info } = await sharp(image.data).ensureAlpha().raw().toBuffer({ resolveWithObject: true }), bgra = new Uint8Array(data).slice();
+    for (let i = 0; i < bgra.length; i += 4) { const red = bgra[i]; bgra[i] = bgra[i + 2]; bgra[i + 2] = red; }
+    return { rect: { x: image.rect?.x ?? 0, y: image.rect?.y ?? 0, width: info.width, height: info.height }, format: "bgra8", grayscale: !!image.grayscale, data: bgra };
+  } catch { return null; }
+}
 export async function ocr(options={}) {
-  const image=options.image??captureScreenshot(options); if (!image) return null; const bitmap=softwareBitmapFromBGRA(image), statics=activationFactory("Windows.Media.Ocr.OcrEngine",IID_IOcrEngineStatics); let engine,operation,result;
+  const image=options.image ? await imageBGRA(options.image) : captureScreenshot(options); if (!image) return null; const bitmap=softwareBitmapFromBGRA(image), statics=activationFactory("Windows.Media.Ocr.OcrEngine",IID_IOcrEngineStatics); let engine,operation,result;
   try { engine=comPtr(statics,10,[],[],"OcrEngine.TryCreateFromUserProfileLanguages"); if (!engine) throw new Error("Windows OCR engine unavailable for user languages"); operation=comPtr(engine,6,[bitmap],["pointer"],"OcrEngine.RecognizeAsync"); result=await asyncResult(operation); return {text:hstringText(comPtr(result,8,[],[],"OcrResult.Text")),rect:image.rect}; }
   finally { comRelease(result,operation,engine,statics,bitmap); }
 }
@@ -966,10 +974,10 @@ function resourceRefs(value, resources, found = new Set(), seen = new Set()) {
 function imageResource(resources, id) { const r = typeof id === "string" && resources.get(id); return r?.kind === "image" ? r.value : null; }
 function imageResult(id, image, saved = {}) { return { image: id, rect: image.rect, grayscale: image.grayscale, ...saved }; }
 function collectScenarioResources(resources, context) {
-  const state = resourceRefs(context.state, resources), prev = resourceRefs(context.prev, resources);
+  const state = resourceRefs(context.state, resources), ret = resourceRefs(context.ret, resources);
   for (const [id, resource] of resources) {
     if (state.has(id)) resource.retained = true;
-    else if (resource.retained || !prev.has(id)) resources.delete(id);
+    else if (resource.retained || !ret.has(id)) resources.delete(id);
   }
 }
 async function scenarioScreenshot(options, resources) {
@@ -996,8 +1004,8 @@ function resolveActionResources(name, value, resources) {
   if (name !== "ocr" || !value || typeof value !== "object" || typeof value.image !== "string") return value;
   const image = imageResource(resources, value.image); if (!image) scenarioFail("image resource unavailable", { image: value.image }); return { ...value, image };
 }
-const ACTIONS = { wait, window_control, window_set, mouse_move, mouse_button, keyb, input_reset, selection, clipboard, ocr, window_find, window_get, a11y_find, a11y_action, display_find, system, window_hit, highlight };
-const SCENARIO_PATH = /^\$\.(prev|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/, STATE_PATH = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
+const ACTIONS = { window_find, window_control, window_get, window_set, window_hit, a11y_find, a11y_action, keyb, input_sel, mouse_move, mouse_button, input_reset, clipboard, ocr, wait, display_find, system };
+const SCENARIO_PATH = /^\$\.(prev|ret|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/, STATE_PATH = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
 function scenarioPath(path) {
   const match = typeof path === "string" && path.match(SCENARIO_PATH);
   return match ? [match[1], ...[...match[2].matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)|\[(\d+)\]/g)].map((x) => x[1] ?? Number(x[2]))] : null;
@@ -1066,12 +1074,29 @@ function applyStateOps(root, ops) {
     else parent[leaf] = structuredClone(value);
   }
 }
+async function outputImage(image) {
+  try { return { rect: image.rect, format: "png", grayscale: image.grayscale, data: await sharpImage(image).png().toBuffer() }; }
+  catch { return image; }
+}
+async function scenarioOutputState(value, resources, seen = new Map(), images = new Map()) {
+  if (typeof value === "string") {
+    const resource = resources.get(value);
+    if (resource?.kind !== "image") return value;
+    if (!images.has(value)) images.set(value, outputImage(resource.value));
+    return await images.get(value);
+  }
+  if (!value || typeof value !== "object") return value;
+  if (seen.has(value)) return seen.get(value);
+  const out = Array.isArray(value) ? [] : {}; seen.set(value, out);
+  for (const [key, item] of Object.entries(value)) out[key] = await scenarioOutputState(item, resources, seen, images);
+  return out;
+}
 export async function run(actions = []) {
-  if (!Array.isArray(actions)) return [{ error: "invalid scenario", message: "actions must be an array" }];
-  const results = [], context = { prev: null, state: Object.create(null) }, resources = new Map(), input = inputState();
+  if (!Array.isArray(actions)) return { results: [{ error: "invalid scenario", message: "actions must be an array" }], state: {} };
+  const results = [], context = { prev: null, ret: null, state: Object.create(null) }, resources = new Map(), held = inputState();
   try {
     for (const action of actions) {
-      let name, result, stateStep = false;
+      let name, result, input, stateStep = false;
       try {
         const entries = action && typeof action === "object" && !Array.isArray(action) ? Object.entries(action) : [];
         if (entries.length !== 1) scenarioFail("invalid action", { message: "expected exactly one command" });
@@ -1083,17 +1108,21 @@ export async function run(actions = []) {
           context.state = next; result = structuredClone(next);
         } else {
           if (name !== "screenshot" && name !== "screenshot_save" && !ACTIONS[name]) scenarioFail("unknown action", { action: name });
-          const value = resolveScenarioValue(params, context) ?? {};
-          if (name === "screenshot") result = await scenarioScreenshot(value, resources);
-          else if (name === "screenshot_save") result = await scenarioScreenshotSave(value, resources);
-          else result = await ACTIONS[name](resolveActionResources(name, value, resources));
+          input = resolveScenarioValue(params, context) ?? {};
+          if (name === "screenshot") result = await scenarioScreenshot(input, resources);
+          else if (name === "screenshot_save") result = await scenarioScreenshotSave(input, resources);
+          else if (name === "input_reset") result = releaseInput(held);
+          else result = await ACTIONS[name](resolveActionResources(name, input, resources));
           if (result == null) result = { error: "no result", action: name };
         }
       } catch (error) { result = scenarioError(error, name); }
       results.push(result);
-      if (!stateStep) context.prev = result;
+      if (!stateStep) {
+        if (input !== undefined) context.prev = input;
+        context.ret = result;
+      }
       collectScenarioResources(resources, context);
     }
-    return results;
-  } finally { releaseInput(input); resources.clear(); }
+    return { results, state: await scenarioOutputState(context.state, resources) };
+  } finally { releaseInput(held); resources.clear(); }
 }

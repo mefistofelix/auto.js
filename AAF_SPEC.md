@@ -20,9 +20,10 @@ AAF is a small declarative format for desktop automation. A scenario is an order
 | `a11y` | Accessibility-element target/filter. |
 | `wid` / `uid` | Opaque current identity for a window / accessibility element. |
 | `pos` / `rect` | Point / rectangle geometry. |
-| `$.prev` | Result of the most recent non-`state` action in the current run. |
+| `$.curr` | Resolved input of the current action inside the small time-expression syntax. |
+| `$.prev` | Resolved input of the most recent non-`state` action. |
+| `$.ret` | Return value of the most recent non-`state` action. |
 | `$.state` | Explicit temporary state owned by the current run. |
-| `$action` | Current resolved action arguments inside the small time-expression syntax. |
 
 
 # 1. Quick start: automate Notepad
@@ -36,7 +37,7 @@ This scenario finds a Notepad window, remembers it, focuses it, types text, capt
       status: normal
 
 - state:
-    target: "$.prev[0]"        # stores the whole typed window record
+    target: "$.ret[0]"        # stores the whole typed window record
 
 - window_control:
     window:
@@ -55,7 +56,7 @@ This scenario finds a Notepad window, remembers it, focuses it, types text, capt
       height: "80%WC"
 
 - state:
-    shot: "$.prev.image"       # retaining the handle keeps the image alive
+    shot: "$.ret.image"       # retaining the handle keeps the image alive
 
 - screenshot_save:
     image: "$.state.shot"      # reuse the retained resource; no recapture
@@ -71,7 +72,7 @@ This scenario finds a Notepad window, remembers it, focuses it, types text, capt
 
 **Step by step**
 
-1. `window_find` returns matching native windows. `$.prev[0]` is the first one.
+1. `window_find` returns matching native windows. `$.ret[0]` is the first one.
 2. `state` stores that window record under `target` so later actions can reuse its `wid`.
 3. `window_control` focuses exactly that window.
 4. `keyb` types Unicode text.
@@ -82,7 +83,7 @@ This scenario finds a Notepad window, remembers it, focuses it, types text, capt
 
 <br>
 
-**Typical results** are deliberately plain and reusable:
+**Typical per-action `results`** are deliberately plain and reusable:
 
 ```yaml
 - - wid: "0x730632"
@@ -140,81 +141,42 @@ Every scenario action is an object with exactly one command key. The reference i
 
 ## Command index
 
-**Display**
-
-- [`display_find`](#display_find) — enumerate or select displays.
-
 **Windows**
 
 - [`window_find`](#window_find) — find native windows.
-- [`window_get`](#window_get) — get one native window, optionally including live control text.
 - [`window_control`](#window_control) — focus, move, resize, minimize, maximize, restore, or close a window.
-- [`window_set`](#window_set) — change supported window properties.
+- [`window_get`](#window_get) — get one native window, optionally including live control text.
+- [`window_set`](#window_set) — change supported window properties or briefly highlight the window.
 - [`window_hit`](#window_hit) — resolve the native window under a point.
 
-**Accessibility and visual debugging**
+**Accessibility**
 
 - [`a11y_find`](#a11y_find) — find accessibility elements and their supported actions.
 - [`a11y_action`](#a11y_action) — invoke a supported accessibility operation on one element.
-- [`highlight`](#highlight) — draw a temporary outline around a window or accessibility element.
 
-**Mouse**
-
-- [`mouse_move`](#mouse_move) — move the physical pointer.
-- [`mouse_button`](#mouse_button) — click, hold, release, or scroll.
-
-**Keyboard, text, input recovery, and clipboard**
+**Input**
 
 - [`keyb`](#keyb) — press keys or type Unicode text.
+- [`input_sel`](#input_sel) — read or replace the current native text selection.
+- [`mouse_move`](#mouse_move) — move the physical pointer.
+- [`mouse_button`](#mouse_button) — click, hold, release, or scroll.
 - [`input_reset`](#input_reset) — release held input owned by AutoJS.
-- [`selection`](#selection) — read or replace the current text selection.
 - [`clipboard`](#clipboard) — read, write, or clear clipboard text.
 
 **Images and recognition**
 
 - [`screenshot`](#screenshot) — capture a new run-scoped image resource.
-- [`screenshot_save`](#screenshot_save) — save an existing retained image resource.
 - [`ocr`](#ocr) — recognize text from a capture source or image resource.
+- [`screenshot_save`](#screenshot_save) — save an existing retained image resource.
 
 **Synchronization**
 
 - [`wait`](#wait) — delay or poll a condition.
 
-**System and session**
+**Display and system**
 
+- [`display_find`](#display_find) — enumerate or select displays.
 - [`system`](#system) — inspect lock state, reset idle timers, or keep the system/display awake.
-
----
-
-<br>
-
-## `display_find`
-
-*Enumerate displays or select one by display index.*
-
-**Action input**
-
-- `display` — optional display selector. The canonical display selector is described in [Displays](#displays). Omit it to return all displays.
-
-```yaml
-- display_find: {}
-
-- display_find:
-    display: { index: 0 }
-```
-
-**Action output**
-
-An array of display records. A valid selector with no match returns `[]`.
-
-```yaml
-- index: 0
-  primary: true
-  scale: 1.25
-  width: 1920
-  height: 1200
-  work: { width: 1920, height: 1140 }
-```
 
 ---
 
@@ -240,31 +202,6 @@ An array of display records. A valid selector with no match returns `[]`.
 **Action output**
 
 An array of window records. A valid search with no matches returns `[]`.
-
----
-
-<br>
-
-## `window_get`
-
-*Get the first native window matching a filter, with optional live native text retrieval.*
-
-**Action input**
-
-- `window` — [window filter](#window-filters) selecting the target.
-- `text` — when `true`, also query the target's live text/content rather than relying only on the normal enumerated `title` field.
-
-```yaml
-- window_get:
-    window: { class: "^Edit$" }
-    text: true
-```
-
-**Action output**
-
-One window record or `null`. With `text: true`, the record also contains `text`, which is a string when the native control supports safe text retrieval or `null` otherwise.
-
-On Windows, live text uses bounded `WM_GETTEXT`. Text selection is intentionally a separate [`selection`](#selection) action rather than a window property.
 
 ---
 
@@ -298,6 +235,31 @@ The current window record after the operation, or `null` when no target can be r
 
 <br>
 
+## `window_get`
+
+*Get the first native window matching a filter, with optional live native text retrieval.*
+
+**Action input**
+
+- `window` — [window filter](#window-filters) selecting the target.
+- `text` — when `true`, also query the target's live text/content rather than relying only on the normal enumerated `title` field.
+
+```yaml
+- window_get:
+    window: { class: "^Edit$" }
+    text: true
+```
+
+**Action output**
+
+One window record or `null`. With `text: true`, the record also contains `text`, which is a string when the native control supports safe text retrieval or `null` otherwise.
+
+On Windows, live text uses bounded `WM_GETTEXT`. Text selection is intentionally a separate [`input_sel`](#input_sel) action rather than a window property.
+
+---
+
+<br>
+
 ## `window_set`
 
 *Apply supported best-effort properties to one native window.*
@@ -310,7 +272,7 @@ The current window record after the operation, or `null` when no target can be r
 - `topmost` — boolean topmost state.
 - `opacity` — number from `0` to `1`.
 - `enabled` — boolean enabled/input state.
-- `highlight` — `true` or an AAF [time value](#time-values); draws a temporary outline after applying the other fields.
+- `highlight` — `true` or an AAF [time value](#time-values); draws a temporary outline around this window after applying the other fields. There is no standalone highlight action.
 
 There is no generic `class` setter. Native class/control identity is not generally an instance property that can be truthfully renamed across backends.
 
@@ -340,8 +302,8 @@ The current window record after applying the requested properties, or `null` whe
 **Action input**
 
 - `pos` — [position](#position-and-rectangle) to test.
-- `display` — optional [display](#displays) context used to resolve the position.
 - `child` — when `true`, return the deepest native child available at that point; otherwise return the root native window.
+- `display` — optional [display](#displays) context used to resolve the position.
 
 ```yaml
 - window_hit:
@@ -419,29 +381,83 @@ The resulting accessibility record with an additional `action` field, or `null` 
 
 <br>
 
-## `highlight`
+## `keyb`
 
-*Draw a temporary visual outline without mutating the selected target.*
+*Generate physical-style key operations or layout-independent Unicode typing.*
 
 **Action input**
 
-- `window` — optional [window filter](#window-filters).
-- `a11y` — optional [accessibility filter](#accessibility-filters).
-- `duration` — outline lifetime as an AAF [time value](#time-values); default `800ms`.
+- `type` — Unicode text sent directly, independent of keyboard layout.
+- `press` — key down+up; a named key, printable character, numeric virtual-key code, or chord array. Printable characters are mapped through the active keyboard layout.
+- `down` — hold one named key or chord.
+- `up` — release one named key or chord.
+- `duration` — total [time value](#time-values) for `type`. When both `duration` and `interval` are supplied, `duration` silently takes precedence. With `user()`, typing uses independent human-like per-character delays instead of a fixed total.
+- `interval` — [time value](#time-values) between characters for `type` or between repeated `press` operations; default `0`.
+- `repeat` — positive integer, default `1`; valid only with `press`.
 
-Exactly one of `window` or `a11y` must be supplied.
+Named keys include letters and digits; Backspace, Tab, Enter, Escape and navigation keys; Caps/Num/Scroll Lock; Print Screen; left/right Shift, Ctrl, Alt and Windows keys; numpad keys; F1–F24; Apps/context-menu; and common browser, volume, media and launch keys. Numeric virtual-key codes remain available for backend-specific cases.
 
 ```yaml
-- highlight:
-    a11y:
-      type: button
-      name: "^Save$"
-    duration: 1s
+- keyb:
+    press: [ctrl, a]
+
+- keyb:
+    press: "@"       # mapped through the active keyboard layout
+
+- keyb:
+    press: backspace
+    repeat: 3
+    interval: 100ms
+
+- keyb:
+    type: "Hello world"
+    interval: 30ms
+
+- keyb:
+    type: "Hello world"
+    duration: user()
+
+- keyb:
+    type: "Hello world"
+    duration: "rand($.curr.type.len*10)"
 ```
 
 **Action output**
 
-`{wid?, uid?, rect}` for the outlined target, or `null` when no target can be resolved.
+An object reporting each operation that was applied. Repeated `press` also reports `repeat`; `type` returns `typed` with the number of characters sent.
+
+---
+
+<br>
+
+## `input_sel`
+
+*Read or replace the selected text of a supported native text control.*
+
+**Action input**
+
+- `read: true` — return the currently selected text.
+- `write: text` — replace the current selection, or insert at the caret when the selection is empty.
+- `window` — optional [window filter](#window-filters) selecting a native text control. When omitted, the focused native text control is used.
+
+Exactly one of `read` or `write` is allowed.
+
+```yaml
+- input_sel:
+    read: true
+
+- input_sel:
+    window: { class: "^Edit$" }
+    write: "replacement"
+```
+
+On the current Windows backend, standard Edit/RichEdit controls use native selection messages. This is a text-input helper, not a `window` property and not an accessibility `select` operation.
+
+**Action output**
+
+- `read` → selected text string.
+- `write` → `{length: N}` with the replacement text length.
+- unsupported or unresolved text control → `null` outside the scenario diagnostic layer.
 
 ---
 
@@ -455,10 +471,10 @@ Exactly one of `window` or `a11y` must be supplied.
 
 - `pos` — destination [position](#position-and-rectangle).
 - `window` — optional [window filter](#window-filters) providing a window-relative geometry context.
-- `display` — optional [display](#displays) context.
 - `duration` — optional [time value](#time-values) for interpolated movement. `user()` chooses a human-like duration from movement distance.
-- `path` — optional movement path. `user()` selects a mildly curved/jittered trajectory that still lands exactly at `pos`.
+- `path` — optional movement path, `linear | user`; default `linear`. `user` selects a mildly curved/jittered trajectory that still lands exactly at `pos`.
 - `steps` — optional interpolation granularity used during a non-zero-duration move. `path` changes only trajectory; it never changes duration.
+- `display` — optional [display](#displays) context.
 
 ```yaml
 - mouse_move:
@@ -469,7 +485,7 @@ Exactly one of `window` or `a11y` must be supplied.
 - mouse_move:
     pos: { x: 800, y: 500 }
     duration: user()
-    path: user()
+    path: user
 ```
 
 **Action output**
@@ -520,55 +536,6 @@ An object describing the applied operation and resolved `pos`; direct-target mod
 
 <br>
 
-## `keyb`
-
-*Generate physical-style key operations or layout-independent Unicode typing.*
-
-**Action input**
-
-- `press` — key down+up; a named key, printable character, numeric virtual-key code, or chord array. Printable characters are mapped through the active keyboard layout.
-- `down` — hold one named key or chord.
-- `up` — release one named key or chord.
-- `type` — Unicode text sent directly, independent of keyboard layout.
-- `repeat` — positive integer, default `1`; valid only with `press`.
-- `interval` — [time value](#time-values) between repeated `press` operations, or between characters for `type`; default `0`.
-- `duration` — total [time value](#time-values) for `type`. When both `duration` and `interval` are supplied, `duration` silently takes precedence. With `user()`, typing uses independent human-like per-character delays instead of a fixed total.
-
-Named keys include letters and digits; Backspace, Tab, Enter, Escape and navigation keys; Caps/Num/Scroll Lock; Print Screen; left/right Shift, Ctrl, Alt and Windows keys; numpad keys; F1–F24; Apps/context-menu; and common browser, volume, media and launch keys. Numeric virtual-key codes remain available for backend-specific cases.
-
-```yaml
-- keyb:
-    press: [ctrl, a]
-
-- keyb:
-    press: "@"       # mapped through the active keyboard layout
-
-- keyb:
-    press: backspace
-    repeat: 3
-    interval: 100ms
-
-- keyb:
-    type: "Hello world"
-    interval: 30ms
-
-- keyb:
-    type: "Hello world"
-    duration: user()
-
-- keyb:
-    type: "Hello world"
-    duration: "rand($action.type.len*10)"
-```
-
-**Action output**
-
-An object reporting each operation that was applied. Repeated `press` also reports `repeat`; `type` returns `typed` with the number of characters sent.
-
----
-
-<br>
-
 ## `input_reset`
 
 *Release keyboard keys and mouse buttons that AutoJS is currently holding through explicit `down` operations.*
@@ -581,46 +548,13 @@ No fields.
 - input_reset: {}
 ```
 
-AutoJS tracks only holds it created itself. `input_reset` releases held `keyb.down`, physical `mouse_button.down`, and direct-window mouse holds. Normal `press` / `click` operations release themselves immediately and therefore need no reset.
+AutoJS tracks only holds it created itself. A direct `input_reset()` call releases all currently owned `keyb.down`, physical `mouse_button.down`, and direct-window mouse holds. Normal `press` / `click` operations release themselves immediately and therefore need no reset.
 
-`run()` performs the same recovery implicitly in its `finally` block, but only for holds added by that run. An explicit `input_reset` remains useful when a scenario wants to release its owned input earlier.
+`run()` snapshots the holds that already existed on entry. Its implicit `finally` recovery releases only holds added by that run, and an explicit `input_reset` action inside the scenario uses the same baseline: it releases the scenario's own holds early without disturbing caller-owned holds that predated the run.
 
 **Action output**
 
 `{released: N}` where `N` is the number of owned holds released.
-
----
-
-<br>
-
-## `selection`
-
-*Read or replace the selected text of a supported native text control.*
-
-**Action input**
-
-- `window` — optional [window filter](#window-filters) selecting a native text control. When omitted, the focused native text control is used.
-- `read: true` — return the currently selected text.
-- `write: text` — replace the current selection, or insert at the caret when the selection is empty.
-
-Exactly one of `read` or `write` is allowed.
-
-```yaml
-- selection:
-    read: true
-
-- selection:
-    window: { class: "^Edit$" }
-    write: "replacement"
-```
-
-On the current Windows backend, standard Edit/RichEdit controls use native selection messages. This is a text-input helper, not a `window` property and not an accessibility `select` operation.
-
-**Action output**
-
-- `read` → selected text string.
-- `write` → `{length: N}` with the replacement text length.
-- unsupported or unresolved text control → `null` outside the scenario diagnostic layer.
 
 ---
 
@@ -632,8 +566,8 @@ On the current Windows backend, standard Edit/RichEdit controls use native selec
 
 **Action input**
 
-- `read: true` — read current Unicode clipboard text.
 - `write: text` — replace clipboard text with the supplied value.
+- `read: true` — read current Unicode clipboard text.
 - `clear: true` — clear clipboard contents.
 
 Exactly one operation is allowed.
@@ -695,30 +629,6 @@ format: webp           # only when save was used
 
 <br>
 
-## `screenshot_save`
-
-*Save a retained image resource without recapturing the screen.*
-
-**Action input**
-
-- `image` — opaque image handle retained in scenario state; see [Image resources](#image-resources).
-- `save` — destination path.
-- `format` — optional `webp | png`. WebP is the default; when omitted, a `.png` or `.webp` `save` extension selects that codec naturally.
-
-```yaml
-- screenshot_save:
-    image: "$.state.shot"
-    save: "later.webp"
-```
-
-**Action output**
-
-`{image, path, bytes, format, rect, grayscale}` when the retained resource is available. Inside `run()`, an unavailable/stale resource is reported through the scenario diagnostic result described under [`run()`](#run).
-
----
-
-<br>
-
 ## `ocr`
 
 *Recognize text from a fresh capture source or a retained image resource.*
@@ -751,6 +661,30 @@ format: webp           # only when save was used
 
 <br>
 
+## `screenshot_save`
+
+*Save a retained image resource without recapturing the screen.*
+
+**Action input**
+
+- `image` — opaque image handle retained in scenario state; see [Image resources](#image-resources).
+- `save` — destination path.
+- `format` — optional `webp | png`. WebP is the default; when omitted, a `.png` or `.webp` `save` extension selects that codec naturally.
+
+```yaml
+- screenshot_save:
+    image: "$.state.shot"
+    save: "later.webp"
+```
+
+**Action output**
+
+`{image, path, bytes, format, rect, grayscale}` when the retained resource is available. Inside `run()`, an unavailable/stale resource is reported through the scenario diagnostic result described under [`run()`](#run).
+
+---
+
+<br>
+
 ## `wait`
 
 *Delay for a duration or poll one condition until it matches or times out.*
@@ -766,13 +700,13 @@ A scalar number/string is a fixed [time value](#time-values):
 
 For conditional waits:
 
-- `timeout` — maximum wait duration; default `10s`.
-- `interval` — polling interval; default `100ms`.
-- `not` — invert the condition.
 - `window` — [window filter](#window-filters); succeeds when a matching window exists.
 - `ocr` — OCR condition. `text` is a case-insensitive regex; remaining fields describe the OCR capture source as in [`ocr`](#ocr).
 - `image` — image-template condition. `path` is a WebP or PNG template, `similarity` defaults to `0.98`, and the remaining fields describe the screenshot source.
 - `change` — visual-change condition. `percent` is the minimum changed-pixel percentage and the remaining fields describe the screenshot source.
+- `timeout` — maximum wait duration; default `10s`.
+- `interval` — polling interval; default `100ms`.
+- `not` — invert the condition.
 
 Exactly one of `window`, `ocr`, `image`, or `change` is allowed in a conditional wait.
 
@@ -799,6 +733,38 @@ Exactly one of `window`, `ocr`, `image`, or `change` is allowed in a conditional
 **Action output**
 
 Positive conditions return their concrete result directly: matched window, `{text, rect}`, `{path, rect, similarity}`, or `{rect, changed, percent, bounds}`. Timeout returns `null`; a satisfied `not: true` returns `true`.
+
+---
+
+<br>
+
+## `display_find`
+
+*Enumerate displays or select one by display index.*
+
+**Action input**
+
+- `display` — optional display selector. The canonical display selector is described in [Displays](#displays). Omit it to return all displays.
+
+```yaml
+- display_find: {}
+
+- display_find:
+    display: { index: 0 }
+```
+
+**Action output**
+
+An array of display records. A valid selector with no match returns `[]`.
+
+```yaml
+- index: 0
+  primary: true
+  scale: 1.25
+  width: 1920
+  height: 1200
+  work: { width: 1920, height: 1140 }
+```
 
 ---
 
@@ -867,38 +833,38 @@ An empty array matches nothing.
 ```yaml
 window:
   wid: "0x123456"
+  title: "^Untitled"
+  bin: "notepad\\.exe$"
+  class: "^Notepad$"
+  pid: 1234
+  foreground: true
+  status: normal
+  hidden: false
+  display: 0
   wpid: null
   woid: null                     # owner is separate from parent
   depth: 0                       # 0 = native top-level
   zorder: 0                      # 0 = frontmost among siblings
-  pid: 1234
-  title: "^Untitled"
-  bin: "notepad\\.exe$"
-  class: "^Notepad$"
-  display: 0
-  status: normal
-  hidden: false
-  foreground: true
 ```
 
 **Fields**
 
 - `wid` — exact native window ID.
+- `title` — case-insensitive regex.
+- `bin` — case-insensitive regex over the executable path.
+- `class` — case-insensitive regex over native class/type when available.
+- `pid` — process ID.
+- `foreground` — boolean exact foreground state.
+- `status` — `normal | minimized | maximized`.
+- `hidden` — boolean visibility state.
+- `display` — display index.
 - `wpid` — immediate parent `wid`; `null` for top-level.
 - `woid` — owner `wid`; owner is independent from the parent tree.
 - `depth` — absolute parent-tree depth; top-level is `0`. `all` enables search at any depth without constraining the value.
 - `zorder` — zero-based native Z-order among windows sharing the same parent/sibling level; `0` is frontmost.
-- `pid` — process ID.
-- `title` — case-insensitive regex.
-- `bin` — case-insensitive regex over the executable path.
-- `class` — case-insensitive regex over native class/type when available.
-- `display` — display index.
-- `status` — `normal | minimized | maximized`.
-- `hidden` — boolean visibility state.
-- `foreground` — boolean exact foreground state.
 - `up` / `down` — ancestor/descendant relation filters.
 
-Scalar-or-array fields: `wid`, `wpid`, `woid`, `depth`, `zorder`, `pid`, `title`, `bin`, `class`, `display`, `status`.
+Scalar-or-array fields: `wid`, `title`, `bin`, `class`, `pid`, `status`, `display`, `wpid`, `woid`, `depth`, `zorder`.
 
 Boolean fields stay scalar.
 
@@ -908,20 +874,20 @@ Window output:
 
 ```yaml
 wid: "0x123456"
+title: "Untitled - Notepad"
+bin: "C:\\...\\Notepad.exe"
+class: "Notepad"
+pid: 1234
+foreground: true
+status: normal
+hidden: false
+display: 0
+rect: { x: 200, y: 120, width: 1200, height: 700 }
+client: { x: 208, y: 151, width: 1184, height: 661 }
 wpid: null
 woid: null
 depth: 0
 zorder: 0
-title: "Untitled - Notepad"
-class: "Notepad"
-pid: 1234
-bin: "C:\\...\\Notepad.exe"
-display: 0
-rect: { x: 200, y: 120, width: 1200, height: 700 }
-client: { x: 208, y: 151, width: 1184, height: 661 }
-status: normal
-hidden: false
-foreground: true
 ```
 
 `client` is **output-only**: it is the native client/content rectangle in screen coordinates, the same geometry represented by `WC`. It is not a window filter because `WC` already provides the canonical client-area geometry language.
@@ -933,14 +899,14 @@ foreground: true
 ```yaml
 a11y:
   uid: "opaque-accessibility-id"
-  wid: null                      # accessibility-only elements may have no native window
-  aid: "^saveButton$"
   name: "^Save$"
   type: button
+  aid: "^saveButton$"
+  value: "Draft"
   class: "Button"
   framework: "WPF|XAML"
   pid: 1234
-  value: "Draft"
+  wid: null                      # accessibility-only elements may have no native window
   enabled: true
   focus: false
   focusable: true
@@ -951,34 +917,34 @@ a11y:
 **Fields**
 
 - `uid` — opaque current accessibility identity.
-- `wid` — native window ID when one exists; otherwise `null`.
-- `aid` — automation/accessibility ID, case-insensitive regex.
 - `name` — accessible name, case-insensitive regex.
 - `type` — normalized lowercase/kebab-case role/control type, for example `button`, `edit`, `document`, `menu-item`, `tab`.
+- `aid` — automation/accessibility ID, case-insensitive regex.
+- `value` — accessible value, case-insensitive regex.
 - `class` — framework-specific class/type name, case-insensitive regex.
 - `framework` — framework/technology name, case-insensitive regex.
 - `pid` — process ID.
-- `value` — accessible value, case-insensitive regex.
+- `wid` — native window ID when one exists; otherwise `null`.
 - `enabled`, `focus`, `focusable`, `offscreen` — booleans when available.
 - `up` / `down` — accessibility-tree relation filters.
 
 `actions` is **output-only**. It lists the currently advertised operations from `a11y_action`; it is not a selector field.
 
-Scalar-or-array fields: `uid`, `wid`, `pid`, `aid`, `name`, `type`, `class`, `framework`, `value`.
+Scalar-or-array fields: `uid`, `name`, `type`, `aid`, `value`, `class`, `framework`, `pid`, `wid`.
 
 Example output for an accessibility-only control:
 
 ```yaml
 uid: "42.11470300.4.1"
-wid: null
-aid: "Tabs"
 name: ""
 type: tab
+aid: "Tabs"
+value: ""
 class: "Microsoft.UI.Xaml.Controls.TabView"
 framework: "XAML"
 pid: 10308
+wid: null
 rect: { x: 266, y: 150, width: 359, height: 40 }
-value: ""
 enabled: true
 focus: false
 focusable: false
@@ -1110,17 +1076,17 @@ One small grammar is used everywhere:
 2s                               2 seconds
 1.5m                             90 seconds
 rand(300ms)                      random value from 0 to 300 ms
-rand($action.type.len*10)        random value derived from resolved action data
+rand($.curr.type.len*10)        random value derived from resolved action data
 user()                           short context-sensitive human-like timing
 ```
 
 Numbers and unitless numeric terms are milliseconds. Strings may use `ms`, `s`, or `m`.
 
-`rand(expr)` evaluates its bound when that time value is consumed. A duration is normally consumed once; a repeated `interval` is consumed again for each gap or poll, so it can vary naturally. Its intentionally tiny expression syntax supports only multiplication of numeric/time terms and `$action` dot paths. A final `.len` reads the length of a string or array. There is no general expression language and no `eval`.
+`rand(expr)` evaluates its bound when that time value is consumed. A duration is normally consumed once; a repeated `interval` is consumed again for each gap or poll, so it can vary naturally. Its intentionally tiny expression syntax supports only multiplication of numeric/time terms and `$.curr` dot paths. A final `.len` reads the length of a string or array. There is no general expression language and no `eval`.
 
-Inside `run()`, `$action` sees the current action arguments **after** normal `$.prev` / `$.state` reference resolution and interpolation. Direct primitive calls use their supplied argument object as `$action`.
+Inside `run()`, `$.curr` sees the current action input **after** normal `$.prev` / `$.ret` / `$.state` reference resolution and interpolation. It exists only while a time expression is being consumed, avoiding circular self-references during ordinary action-value resolution. Direct primitive calls use their supplied argument object as `$.curr`.
 
-`user()` is contextual rather than a fixed duration. Generic interval use chooses a short human-like delay. `mouse_move.duration: user()` chooses only a human-like travel time; trajectory is independent and uses `mouse_move.path: user()`. For `keyb.type`, `duration: user()` or `interval: user()` generates independent per-character pauses, including slightly longer pauses around punctuation. If both keyb fields are present, `duration` wins without an error or warning.
+`user()` is contextual rather than a fixed duration. Generic interval use chooses a short human-like delay. `mouse_move.duration: user()` chooses only a human-like travel time; trajectory is independent and uses the non-time field `mouse_move.path: user`. For `keyb.type`, `duration: user()` or `interval: user()` generates independent per-character pauses, including slightly longer pauses around punctuation. If both keyb fields are present, `duration` wins without an error or warning.
 
 ---
 
@@ -1131,9 +1097,16 @@ The automation primitives themselves remain stateless: each action resolves its 
 
 ## run()
 
-`run([...])` executes actions sequentially and returns one result per action in the same order.
+`run([...])` executes actions sequentially and returns an object with two fields:
 
-Normal scenario actions are best-effort, but failures are **returned as data rather than thrown out of `run()`**. Each failed step produces a small JSON-compatible diagnostic object and execution continues. Find actions still return `[]` for a valid search with no matches. Direct primitive calls keep their documented direct-call behavior; this diagnostic layer belongs to `run()`.
+```yaml
+results: [...]  # one result per action, in order
+state: {...}    # final scenario state returned to the caller
+```
+
+`results` contains the ordinary per-action return values. During execution, `$.prev` exposes the resolved input of the previous non-`state` action and `$.ret` exposes its return value. `state` is the final scenario state after the last action. Ordinary state values are copied out normally; image handles that are still retained anywhere in the final state are materialized there as image resources, so the caller owns those images after `run()` returns.
+
+Normal scenario actions are best-effort, but failures are **returned as data rather than thrown out of `run()`**. Each failed step produces a small JSON-compatible diagnostic object in `results` and execution continues. Find actions still return `[]` for a valid search with no matches. Direct primitive calls keep their documented direct-call behavior; this diagnostic layer belongs to `run()`.
 
 Typical diagnostics are intentionally compact:
 
@@ -1155,22 +1128,24 @@ Typical diagnostics are intentionally compact:
   message: "Invalid repeat: 0"
 ```
 
-`error` is the short category. Optional `action`, `path`, or `image` identifies what failed. `message` is used only when a concise underlying runtime cause is useful. Stack traces are not part of AAF output. A malformed action is reported as `error: invalid action`; a non-array `run()` input is reported as `error: invalid scenario`. A diagnostic from a non-`state` step becomes the new `$.prev`; a failed `state` step changes neither state nor `$.prev`.
+`error` is the short category. Optional `action`, `path`, or `image` identifies what failed. `message` is used only when a concise underlying runtime cause is useful. Stack traces are not part of AAF output. A malformed action is reported as `error: invalid action`; a non-array `run()` input returns `{results: [{error: "invalid scenario", ...}], state: {}}`. A diagnostic from a non-`state` step becomes the new `$.ret`. Its resolved input becomes `$.prev` when input resolution succeeded. A failed `state` step changes neither state, `$.prev`, nor `$.ret`.
 
 A new run starts with an empty state and no resources.
 
-## `$.prev` and `$.state`
+## Scenario references
 
 During one run:
 
 ```text
-$.prev    result of the most recent non-state action
-$.state   explicit temporary scenario memory
+$.curr   resolved input of the current action, for time expressions
+$.prev   resolved input of the most recent non-state action
+$.ret    return value of the most recent non-state action
+$.state  explicit temporary scenario memory
 ```
 
-Every action may read both. Only `state` may modify `$.state`.
+Ordinary action values may read `$.prev`, `$.ret`, and `$.state`. `$.curr` is available only inside the small time-expression grammar after the current input has been resolved. Only `state` may modify `$.state`.
 
-`state` does not replace `$.prev`, so multiple consecutive state patches may all read the same previous action result.
+`state` is transparent to action history: it changes neither `$.prev` nor `$.ret`, so multiple consecutive state patches continue to see the same previous action input and return value.
 
 ## Typed references
 
@@ -1178,20 +1153,22 @@ A string made entirely of a `$.…` path is replaced by the actual referenced va
 
 ```yaml
 pid: "$.state.target.pid"
-window: "$.state.window_filter"
-items: "$.prev"
+window: "$.prev.window"
+items: "$.ret"
 ```
 
-Supported path shape:
+Supported ordinary path shape:
 
 ```text
 $.prev
-$.prev[0].wid
+$.prev.window.wid
+$.ret
+$.ret[0].wid
 $.state.target
 $.state.items[2].name
 ```
 
-Indexes are zero-based. A missing path invalidates the step instead of silently becoming a `null` argument. `run()` returns `{error: "unresolved reference", path: "$.…"}` for that step.
+Indexes are zero-based. A missing path invalidates the step instead of silently becoming a `null` argument. That step's `results` entry becomes `{error: "unresolved reference", path: "$.…"}`.
 
 ## Text interpolation
 
@@ -1199,7 +1176,7 @@ Use `<<…>>` inside a larger string:
 
 ```yaml
 title: "Document - <<$.state.customer>>"
-text: "Window <<$.state.index>>: <<$.prev[0].title>>"
+text: "Window <<$.state.index>>: <<$.ret[0].title>>"
 ```
 
 Interpolation always produces text. Objects and arrays use compact JSON text.
@@ -1237,10 +1214,10 @@ State paths use the canonical dotted state-path grammar. Values may use [typed r
 ```yaml
 - state:
     target:
-      wid: "$.prev[0].wid"
-      pid: "$.prev[0].pid"
-    "target.title": "$.prev[0].title"
-    "&history": "$.prev[0]"
+      wid: "$.ret[0].wid"
+      pid: "$.ret[0].pid"
+    "target.title": "$.ret[0].title"
+    "&history": "$.ret[0]"
     "-":
       - temporary
       - target.pid
@@ -1250,22 +1227,22 @@ Assignments and pushes apply first; deletions apply second, so deletion wins on 
 
 **Action output**
 
-The complete resulting `$.state`. A failed `state` action returns a concise scenario diagnostic, changes neither state nor `$.prev`, and never partially applies a patch.
+The complete resulting `$.state`. A `state` action does not change `$.prev` or `$.ret`. A failed `state` action also leaves state unchanged and never partially applies a patch.
 
 ## Image resources
 
-Some data is too large or implementation-specific to place directly in JSON state. AAF represents it with opaque run-scoped resource handles.
+Some data is too large or implementation-specific to carry through ordinary scenario action data. During execution, AAF represents it with opaque run-scoped resource handles.
 
-`screenshot` creates an image resource and returns an opaque `image` string. The raw pixels never appear in AAF data. The current implementation keeps run-scoped images as raw pixels in memory; PNG/WebP encoding is only file I/O. This avoids encode/decode work in OCR, image matching, and change detection while keeping the storage representation private behind the opaque handle.
+`screenshot` creates an image resource and returns an opaque `image` string. Scenario references, `$.ret`, state-action results, OCR, matching, and `screenshot_save` use that handle while the run is active. The current implementation keeps the underlying image as raw BGRA8 pixels in memory throughout scenario execution. Encoding is deferred to disk output or final-state materialization, avoiding encode/decode work in OCR, image matching, and change detection.
 
-A newly created image is temporarily reachable through `$.prev`. Storing its handle anywhere in `$.state` retains the underlying resource:
+A newly created image is temporarily reachable through `$.ret`. Storing its handle anywhere in `$.state` retains the underlying resource:
 
 ```yaml
 - screenshot:
     window: { wid: "$.state.target.wid" }
 
 - state:
-    shot: "$.prev.image"
+    shot: "$.ret.image"
 ```
 
 Once retained, state owns the resource. Multiple state paths may reference the same handle. Removing or overwriting one path does not free the resource while another state reference remains.
@@ -1277,9 +1254,11 @@ When the **last** state reference disappears, the resource is released. A stale 
     "-": [shot]
 ```
 
-All remaining resources are released when the run ends. Resource handles are never valid across runs.
+When `run()` returns, every image still referenced by the **final** state is materialized into `run().state` and ownership of that image value passes to the caller. The current Deno backend keeps BGRA8 raw while the scenario is active, then normally encodes final-state images once as lossless PNG: `{format: "png", rect, grayscale, data: Uint8Array}`. This keeps OCR/matching on the fast raw path during execution while making retained caller-owned images much smaller. Final-state compaction is best-effort: if PNG encoding itself is unavailable, the caller receives the equivalent raw BGRA8 image rather than losing the state or failing the whole run. If the same handle appears at several state paths, those paths share the same materialized image object.
 
-`screenshot_save` is therefore a state-to-disk operation: it saves an already retained image resource without recapturing anything.
+Direct `ocr({image})` accepts these returned PNG image resources and decodes them back to BGRA8 on demand. Resources not referenced by the final state are released when the run ends. The opaque handle strings themselves are never valid across runs and are not the caller-facing image representation. Per-action `results` remain JSON-compatible; the final returned `state` may contain host-native binary resource values.
+
+`screenshot_save` is therefore a state-to-disk operation **during the run**: it saves an already retained image resource without recapturing anything.
 
 ---
 
@@ -1348,6 +1327,6 @@ AAF intentionally keeps a small set of stable rules:
 - platform-specific capabilities remain explicit and best-effort.
 - scenario state is optional infrastructure, not the center of the action model.
 - heavy runtime data uses opaque resources instead of being embedded in JSON.
-- results stay simple, JSON-compatible, and reusable by later actions.
+- per-action results stay simple, JSON-compatible, and reusable by later actions; final `run().state` may materialize explicitly retained binary resources for the caller.
 
 The goal is for an AAF scenario to stay readable by hand, easy to generate, and precise enough for robust desktop automation without becoming a general-purpose programming language.

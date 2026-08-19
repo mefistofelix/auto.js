@@ -1403,14 +1403,8 @@ export function clipboard(options = {}) {
 }
 
 function guid(text) {
-  const h = text.replace(/[{}-]/g, "");
-  const b = new Uint8Array(16);
-  const v = new DataView(b.buffer);
-  v.setUint32(0, parseInt(h.slice(0, 8), 16), true);
-  v.setUint16(4, parseInt(h.slice(8, 12), 16), true);
-  v.setUint16(6, parseInt(h.slice(12, 16), 16), true);
-  for (let i = 0; i < 8; i++) b[8 + i] = parseInt(h.slice(16 + i * 2, 18 + i * 2), 16);
-  return b;
+  const bytes = Uint8Array.from(text.replace(/[{}-]/g, "").match(/../g), (x) => parseInt(x, 16));
+  return Uint8Array.of(bytes[3], bytes[2], bytes[1], bytes[0], bytes[5], bytes[4], bytes[7], bytes[6], ...bytes.slice(8));
 }
 
 function checkHR(hr, label) {
@@ -1434,34 +1428,20 @@ function comOut(object, index, Out = BigUint64Array, length = 1, args = [], para
   return { hr, out };
 }
 
-function comRelease(object) {
-  if (object) comCall(object, 2, "u32");
+function comPtr(object, index, args = [], parameters = args.map(() => "pointer"), label) {
+  const { hr, out } = comOut(object, index, BigUint64Array, 1, args, parameters);
+  if (label) checkHR(hr, label); else if (hr < 0) return null;
+  return asPointer(out[0]);
 }
-
-function comQuery(object, iid) {
-  const { hr, out } = comOut(object, 0, BigUint64Array, 1, [guid(iid)], ["buffer"]);
-  checkHR(hr, "QueryInterface");
-  return out[0] ? Deno.UnsafePointer.create(out[0]) : null;
-}
+function comRelease(...objects) { for (const object of objects) if (object) comCall(object, 2, "u32"); }
+function comUse(object, fn) { if (!object) return null; try { return fn(object); } finally { comRelease(object); } }
+function comQuery(object, iid) { return comPtr(object, 0, [guid(iid)], ["buffer"], "QueryInterface"); }
 
 const CLSID_CUIAutomation = "ff48dba4-60ef-4201-aa87-54103eef594e";
 const IID_IUIAutomation = "30cbe57d-d9d0-452a-ab13-7ac5ac4825ee";
 const CLSCTX_INPROC_SERVER = 1;
 
-const UIA_TYPES = new Map([
-  [50000, "button"], [50001, "calendar"], [50002, "check-box"], [50003, "combo-box"],
-  [50004, "edit"], [50005, "hyperlink"], [50006, "image"], [50007, "list-item"],
-  [50008, "list"], [50009, "menu"], [50010, "menu-bar"], [50011, "menu-item"],
-  [50012, "progress-bar"], [50013, "radio-button"], [50014, "scroll-bar"], [50015, "slider"],
-  [50016, "spinner"], [50017, "status-bar"], [50018, "tab"], [50019, "tab-item"],
-  [50020, "text"], [50021, "tool-bar"], [50022, "tool-tip"], [50023, "tree"],
-  [50024, "tree-item"], [50025, "custom"], [50026, "group"], [50027, "thumb"],
-  [50028, "data-grid"], [50029, "data-item"], [50030, "document"], [50031, "split-button"],
-  [50032, "window"], [50033, "pane"], [50034, "header"], [50035, "header-item"],
-  [50036, "table"], [50037, "title-bar"], [50038, "separator"], [50039, "semantic-zoom"],
-  [50040, "app-bar"],
-]);
-const UIA_TYPE_IDS = new Map([...UIA_TYPES].map(([id, name]) => [name, id]));
+const UIA_TYPES = "button calendar check-box combo-box edit hyperlink image list-item list menu menu-bar menu-item progress-bar radio-button scroll-bar slider spinner status-bar tab tab-item text tool-bar tool-tip tree tree-item custom group thumb data-grid data-item document split-button window pane header header-item table title-bar separator semantic-zoom app-bar".split(" ");
 
 let comReady = false;
 let uiaAutomation = null;
@@ -1482,49 +1462,25 @@ function ensureUia() {
   uiaAutomation = out[0] ? Deno.UnsafePointer.create(out[0]) : null;
   if (!uiaAutomation) throw new Error("CUIAutomation returned no interface");
 
-  const walker = comOut(uiaAutomation, 14);
-  if (walker.hr < 0 || !walker.out[0]) {
-    comRelease(uiaAutomation);
-    uiaAutomation = null;
-    checkHR(walker.hr, "IUIAutomation.ControlViewWalker");
-    throw new Error("UI Automation ControlViewWalker unavailable");
-  }
-  uiaWalker = Deno.UnsafePointer.create(walker.out[0]);
+  uiaWalker = comPtr(uiaAutomation, 14, [], [], "IUIAutomation.ControlViewWalker");
+  if (!uiaWalker) { comRelease(uiaAutomation); uiaAutomation = null; throw new Error("UI Automation ControlViewWalker unavailable"); }
 }
 
-function uiaOutElement(object, index, args = []) {
-  const { hr, out } = comOut(object, index, BigUint64Array, 1, args);
-  return hr >= 0 && out[0] ? Deno.UnsafePointer.create(out[0]) : null;
-}
+function uiaRootElement() { ensureUia(); return comPtr(uiaAutomation, 5); }
+function uiaElementFromHandle(hwnd) { if (!hwnd) return null; ensureUia(); return comPtr(uiaAutomation, 6, [hwnd]); }
+function uiaParent(element) { ensureUia(); return comPtr(uiaWalker, 3, [element]); }
+function uiaFirstChild(element) { ensureUia(); return comPtr(uiaWalker, 4, [element]); }
+function uiaNextSibling(element) { ensureUia(); return comPtr(uiaWalker, 6, [element]); }
 
-function uiaRootElement() { ensureUia(); return uiaOutElement(uiaAutomation, 5); }
-function uiaElementFromHandle(hwnd) { if (!hwnd) return null; ensureUia(); return uiaOutElement(uiaAutomation, 6, [hwnd]); }
-function uiaParent(element) { ensureUia(); return uiaOutElement(uiaWalker, 3, [element]); }
-function uiaFirstChild(element) { ensureUia(); return uiaOutElement(uiaWalker, 4, [element]); }
-function uiaNextSibling(element) { ensureUia(); return uiaOutElement(uiaWalker, 6, [element]); }
-
-function uiaInt(element, index) {
-  const { hr, out } = comOut(element, index, Int32Array);
-  return hr >= 0 ? out[0] : null;
-}
+function uiaInt(element, index) { const r = comOut(element, index, Int32Array); return r.hr >= 0 ? r.out[0] : null; }
 function uiaBool(element, index) { const value = uiaInt(element, index); return value == null ? null : !!value; }
-
-function bstrText(pointer) {
-  const length = pointer ? oleaut32.symbols.SysStringLen(pointer) : 0;
-  return length ? textDecoder16.decode(new Uint8Array(new Deno.UnsafePointerView(pointer).getArrayBuffer(length * 2))) : "";
-}
-
+function bstrText(pointer) { const n = pointer ? oleaut32.symbols.SysStringLen(pointer) : 0; return n ? textDecoder16.decode(new Uint8Array(new Deno.UnsafePointerView(pointer).getArrayBuffer(n * 2))) : ""; }
 function uiaBstr(element, index) {
-  const { hr, out } = comOut(element, index);
-  if (hr < 0 || !out[0]) return "";
-  const pointer = Deno.UnsafePointer.create(out[0]);
+  const pointer = comPtr(element, index);
+  if (!pointer) return "";
   try { return bstrText(pointer); } finally { oleaut32.symbols.SysFreeString(pointer); }
 }
-
-function uiaNativeWid(element) {
-  const { hr, out } = comOut(element, 36);
-  return hr >= 0 && out[0] ? `0x${out[0].toString(16)}` : null;
-}
+function uiaNativeWid(element) { const pointer = comPtr(element, 36); return pointer ? ptrId(pointer) : null; }
 
 function uiaRect(element) {
   const { hr, out: rect } = comOut(element, 43, Int32Array, 4);
@@ -1532,66 +1488,39 @@ function uiaRect(element) {
 }
 
 function uiaRuntimeId(element) {
-  const out = new BigUint64Array(1);
-  const hr = comMethod(element, 4, { parameters: ["pointer", "buffer"], result: "i32" }).call(element, out);
-  if (hr < 0 || !out[0]) return null;
-
-  const safeArray = Deno.UnsafePointer.create(out[0]);
+  const result = comOut(element, 4);
+  if (result.hr < 0 || !result.out[0]) return null;
+  const array = asPointer(result.out[0]), lower = new Int32Array(1), upper = new Int32Array(1), data = new BigUint64Array(1);
   let accessed = false;
   try {
-    const lower = new Int32Array(1);
-    const upper = new Int32Array(1);
-    if (oleaut32.symbols.SafeArrayGetLBound(safeArray, 1, lower) < 0) return null;
-    if (oleaut32.symbols.SafeArrayGetUBound(safeArray, 1, upper) < 0) return null;
+    if (oleaut32.symbols.SafeArrayGetLBound(array, 1, lower) < 0 || oleaut32.symbols.SafeArrayGetUBound(array, 1, upper) < 0) return null;
     const count = upper[0] - lower[0] + 1;
     if (count <= 0) return [];
-
-    const data = new BigUint64Array(1);
-    if (oleaut32.symbols.SafeArrayAccessData(safeArray, data) < 0 || !data[0]) return null;
+    if (oleaut32.symbols.SafeArrayAccessData(array, data) < 0 || !data[0]) return null;
     accessed = true;
-    const pointer = Deno.UnsafePointer.create(data[0]);
-    return [...new Int32Array(new Deno.UnsafePointerView(pointer).getArrayBuffer(count * 4))];
+    return [...new Int32Array(new Deno.UnsafePointerView(asPointer(data[0])).getArrayBuffer(count * 4))];
   } finally {
-    if (accessed) oleaut32.symbols.SafeArrayUnaccessData(safeArray);
-    oleaut32.symbols.SafeArrayDestroy(safeArray);
+    if (accessed) oleaut32.symbols.SafeArrayUnaccessData(array);
+    oleaut32.symbols.SafeArrayDestroy(array);
   }
 }
 
 function uiaVariant(element, propertyId) {
   const variant = new Uint8Array(24);
-  const hr = comMethod(element, 10, {
-    parameters: ["pointer", "i32", "buffer"],
-    result: "i32",
-  }).call(element, propertyId, variant);
-  if (hr < 0) return null;
-
+  if (comCall(element, 10, "i32", ["i32", "buffer"], [propertyId, variant]) < 0) return null;
   try {
-    const view = new DataView(variant.buffer);
-    const type = view.getUint16(0, true);
-    if (type === 0 || type === 1) return null;
+    const view = new DataView(variant.buffer), type = view.getUint16(0, true);
     if (type === 3) return view.getInt32(8, true);
     if (type === 5) return view.getFloat64(8, true);
+    if (type === 8) return bstrText(asPointer(view.getBigUint64(8, true)));
     if (type === 11) return view.getInt16(8, true) !== 0;
     if (type === 19) return view.getUint32(8, true);
-    if (type === 8) {
-      const raw = view.getBigUint64(8, true);
-      if (!raw) return "";
-      return bstrText(Deno.UnsafePointer.create(raw));
-    }
     return null;
-  } finally {
-    oleaut32.symbols.VariantClear(variant);
-  }
+  } finally { oleaut32.symbols.VariantClear(variant); }
 }
 
-function uiaTypeName(id) {
-  return UIA_TYPES.get(Number(id)) ?? (id == null ? null : String(id));
-}
-
-function normalizeUiaType(value) {
-  if (typeof value === "number") return uiaTypeName(value);
-  return String(value ?? "").trim().toLowerCase().replace(/[_\s]+/g, "-");
-}
+function uiaTypeName(id) { return id == null ? null : UIA_TYPES[Number(id) - 50000] ?? String(id); }
+function normalizeUiaType(value) { return typeof value === "number" ? uiaTypeName(value) : String(value ?? "").trim().toLowerCase().replace(/[_\s]+/g, "-"); }
 
 function uiaRecord(element) {
   const runtimeId = uiaRuntimeId(element);
@@ -1611,19 +1540,10 @@ function uiaRecord(element) {
     focus: uiaBool(element, 26),
     focusable: uiaBool(element, 27),
     offscreen: uiaBool(element, 38),
-    _typeId: typeId,
   };
 }
 
-function publicUia({ _typeId, ...element }) {
-  return element;
-}
-
-function normalizeUiaFilter(filter) {
-  if (filter == null) return {};
-  if (typeof filter === "string") return { name: filter };
-  return filter;
-}
+function normalizeUiaFilter(filter) { return filter == null ? {} : typeof filter === "string" ? { name: filter } : filter; }
 
 const A11Y_FIELDS = {
   uid: [false, filterExact], wid: [true, filterId], pid: [false, filterNum],
@@ -1633,141 +1553,86 @@ const A11Y_FIELDS = {
 };
 function matchesUiaOwn(record, filter) { return matchesFields(record, filter, A11Y_FIELDS); }
 
-function uiaWalkDown(root, maxDepth, visitor) {
-  function walk(parent, depth) {
-    if (depth > maxDepth) return false;
+function uiaWalk(root, direction, maxDepth, visitor) {
+  if (direction === "up") {
+    let current = uiaParent(root);
+    for (let depth = 1; current && depth <= maxDepth; depth++) {
+      let next = null;
+      try { if (visitor(current, depth)) return true; if (depth < maxDepth) next = uiaParent(current); }
+      finally { comRelease(current); }
+      current = next;
+    }
+    return false;
+  }
+  function down(parent, depth) {
     let child = uiaFirstChild(parent);
     while (child) {
       let next = null;
-      try {
-        if (visitor(child, depth)) return true;
-        if (depth < maxDepth && walk(child, depth + 1)) return true;
-        next = uiaNextSibling(child);
-      } finally {
-        comRelease(child);
-      }
+      try { if (visitor(child, depth) || (depth < maxDepth && down(child, depth + 1))) return true; next = uiaNextSibling(child); }
+      finally { comRelease(child); }
       child = next;
     }
     return false;
   }
-  return walk(root, 1);
+  return maxDepth >= 1 && down(root, 1);
 }
 
-function uiaWalkUp(root, maxDepth, visitor) {
-  let current = uiaParent(root);
-  for (let depth = 1; current && depth <= maxDepth; depth++) {
-    let next = null;
-    try {
-      if (visitor(current, depth)) return true;
-      if (depth < maxDepth) next = uiaParent(current);
-    } finally {
-      comRelease(current);
-    }
-    current = next;
-  }
-  return false;
-}
-
-function uiaWindowTargetSet(filter) {
-  return new Set(windowRecords(filter ?? {}).map((window) => window.wid.toLowerCase()));
-}
-
+function uiaWindowTargetSet(filter) { return new Set(windowRecords(filter ?? {}).map((window) => window.wid.toLowerCase())); }
 function matchesUiaRelation(element, direction, spec) {
   const relation = relationSpec(spec, "a11y");
   if (!relation) return false;
-  const walk = direction === "up" ? uiaWalkUp : uiaWalkDown;
-
   if (relation.domain === "window") {
     const targets = uiaWindowTargetSet(relation.filter);
-    if (!targets.size) return false;
-    return walk(element, relation.depth, (candidate) => {
-      const wid = uiaNativeWid(candidate);
-      return !!wid && targets.has(wid.toLowerCase());
+    return !!targets.size && uiaWalk(element, direction, relation.depth, (candidate) => {
+      const wid = uiaNativeWid(candidate); return !!wid && targets.has(wid.toLowerCase());
     });
   }
-
-  return walk(element, relation.depth, (candidate) => {
-    const record = uiaRecord(candidate);
-    return matchesUia(candidate, record, relation.filter);
+  return uiaWalk(element, direction, relation.depth, (candidate) => {
+    const record = uiaRecord(candidate); return matchesUia(candidate, record, relation.filter);
   });
 }
-
 function matchesUia(element, record, filter) {
   filter = normalizeUiaFilter(filter);
-  if (!matchesUiaOwn(record, filter)) return false;
-  if (filter.up != null && !matchesUiaRelation(element, "up", filter.up)) return false;
-  if (filter.down != null && !matchesUiaRelation(element, "down", filter.down)) return false;
-  return true;
+  return matchesUiaOwn(record, filter)
+    && (filter.up == null || matchesUiaRelation(element, "up", filter.up))
+    && (filter.down == null || matchesUiaRelation(element, "down", filter.down));
 }
-
 function matchesWindowUiaRelation(window, direction, relation) {
-  const root = uiaElementFromHandle(asPointer(window.wid));
-  if (!root) return false;
-  try {
-    const walk = direction === "up" ? uiaWalkUp : uiaWalkDown;
-    return walk(root, relation.depth, (candidate) => {
-      const record = uiaRecord(candidate);
-      return matchesUia(candidate, record, relation.filter);
-    });
-  } finally {
-    comRelease(root);
-  }
+  return !!comUse(uiaElementFromHandle(asPointer(window.wid)), (root) => uiaWalk(root, direction, relation.depth, (candidate) => {
+    const record = uiaRecord(candidate); return matchesUia(candidate, record, relation.filter);
+  }));
 }
 
 function uiaCollectFromRoot(root, filter, maxDepth, found, seen, limit) {
-  return uiaWalkDown(root, maxDepth, (element) => {
+  return uiaWalk(root, "down", maxDepth, (element) => {
     const record = uiaRecord(element);
     if (!matchesUia(element, record, filter)) return false;
     const key = record.uid ?? `${record.wid ?? ""}:${record.pid ?? ""}:${record.name}:${record.type}:${record.rect?.x ?? ""}:${record.rect?.y ?? ""}`;
     if (!seen.has(key)) {
       seen.add(key);
-      found.push(publicUia(record));
+      found.push(record);
     }
     return found.length >= limit;
   });
 }
 
 export function a11y_find({ a11y = {}, limit = 0 } = {}) {
-  const max = findLimit(limit);
+  const max = findLimit(limit), filter = normalizeUiaFilter(a11y), found = [], seen = new Set();
   if (max == null) return [];
-  const filter = normalizeUiaFilter(a11y);
-  const found = [];
-  const seen = new Set();
-
+  const collect = (root, depth) => comUse(root, (element) => uiaCollectFromRoot(element, filter, depth, found, seen, max));
   if (own(filter, "wid") && filter.wid != null && !Array.isArray(filter.wid)) {
-    const element = uiaElementFromHandle(asPointer(filter.wid));
-    if (!element) return [];
-    try {
-      const record = uiaRecord(element);
-      return matchesUia(element, record, filter) ? [publicUia(record)] : [];
-    } finally {
-      comRelease(element);
-    }
+    const record = comUse(uiaElementFromHandle(asPointer(filter.wid)), (element) => {
+      const value = uiaRecord(element); return matchesUia(element, value, filter) ? value : null;
+    });
+    return record ? [record] : [];
   }
-
-  const upRelation = filter.up == null ? null : relationSpec(filter.up, "a11y");
-  if (upRelation?.domain === "window") {
-    const windows = windowRecords(upRelation.filter);
-    for (const window of windows) {
-      const root = uiaElementFromHandle(asPointer(window.wid));
-      if (!root) continue;
-      try {
-        uiaCollectFromRoot(root, filter, upRelation.depth, found, seen, max);
-      } finally {
-        comRelease(root);
-      }
+  const up = filter.up == null ? null : relationSpec(filter.up, "a11y");
+  if (up?.domain === "window") {
+    for (const window of windowRecords(up.filter)) {
+      collect(uiaElementFromHandle(asPointer(window.wid)), up.depth);
       if (found.length >= max) break;
     }
-    return found;
-  }
-
-  const root = uiaRootElement();
-  if (!root) return [];
-  try {
-    uiaCollectFromRoot(root, filter, Infinity, found, seen, max);
-  } finally {
-    comRelease(root);
-  }
+  } else collect(uiaRootElement(), Infinity);
   return found;
 }
 
@@ -1775,156 +1640,76 @@ let roReady = false;
 function ensureRo() {
   if (roReady) return;
   const hr = combase.symbols.RoInitialize(1);
-  // S_OK, S_FALSE and RPC_E_CHANGED_MODE are all usable for our calls.
   if (hr < 0 && (hr >>> 0) !== 0x80010106) checkHR(hr, "RoInitialize");
   roReady = true;
 }
-
 function createHString(text) {
-  const chars = wide(text);
-  const out = new BigUint64Array(1);
+  const chars = wide(text), out = new BigUint64Array(1);
   checkHR(combase.symbols.WindowsCreateString(chars, chars.length, out), "WindowsCreateString");
-  return out[0] ? Deno.UnsafePointer.create(out[0]) : null;
+  return asPointer(out[0]);
 }
-
 function hstringText(hstring, free = true) {
   if (!hstring) return "";
   try {
-    const length = new Uint32Array(1);
-    const pointer = combase.symbols.WindowsGetStringRawBuffer(hstring, length);
-    if (!pointer || !length[0]) return "";
-    return textDecoder16.decode(new Uint8Array(new Deno.UnsafePointerView(pointer).getArrayBuffer(length[0] * 2)));
-  } finally {
-    if (free) combase.symbols.WindowsDeleteString(hstring);
-  }
+    const length = new Uint32Array(1), pointer = combase.symbols.WindowsGetStringRawBuffer(hstring, length);
+    return pointer && length[0] ? textDecoder16.decode(new Uint8Array(new Deno.UnsafePointerView(pointer).getArrayBuffer(length[0] * 2))) : "";
+  } finally { if (free) combase.symbols.WindowsDeleteString(hstring); }
 }
-
 function activationFactory(className, iid) {
   ensureRo();
-  const name = createHString(className);
-  const out = new BigUint64Array(1);
-  try {
-    checkHR(combase.symbols.RoGetActivationFactory(name, guid(iid), out), `RoGetActivationFactory(${className})`);
-  } finally {
-    combase.symbols.WindowsDeleteString(name);
-  }
-  return out[0] ? Deno.UnsafePointer.create(out[0]) : null;
+  const name = createHString(className), out = new BigUint64Array(1);
+  try { checkHR(combase.symbols.RoGetActivationFactory(name, guid(iid), out), `RoGetActivationFactory(${className})`); }
+  finally { combase.symbols.WindowsDeleteString(name); }
+  return asPointer(out[0]);
 }
 
-const IID_IBufferFactory = "71af914d-c10f-484b-bc50-14bc623b3a27";
-const IID_IBufferByteAccess = "905a0fef-bc53-11df-8c49-001e4fc686da";
-const IID_ISoftwareBitmapStatics = "df0385db-672f-4a9d-806e-c2442f343e86";
-const IID_IOcrEngineStatics = "5bffa85a-3384-3540-9940-699120d428a8";
-const IID_IAsyncInfo = "00000036-0000-0000-c000-000000000046";
+const IID_IBufferFactory = "71af914d-c10f-484b-bc50-14bc623b3a27", IID_IBufferByteAccess = "905a0fef-bc53-11df-8c49-001e4fc686da";
+const IID_ISoftwareBitmapStatics = "df0385db-672f-4a9d-806e-c2442f343e86", IID_IOcrEngineStatics = "5bffa85a-3384-3540-9940-699120d428a8", IID_IAsyncInfo = "00000036-0000-0000-c000-000000000046";
 
 function softwareBitmapFromBGRA(image) {
-  const bufferFactory = activationFactory("Windows.Storage.Streams.Buffer", IID_IBufferFactory);
-  let buffer;
-  let byteAccess;
-  let softwareStatics;
+  const factory = activationFactory("Windows.Storage.Streams.Buffer", IID_IBufferFactory);
+  let buffer, access, statics;
   try {
-    const bufferOut = new BigUint64Array(1);
-    checkHR(
-      comMethod(bufferFactory, 6, { parameters: ["pointer", "u32", "buffer"], result: "i32" }).call(bufferFactory, image.data.length, bufferOut),
-      "IBufferFactory.Create",
-    );
-    buffer = Deno.UnsafePointer.create(bufferOut[0]);
-
-    checkHR(
-      comMethod(buffer, 8, { parameters: ["pointer", "u32"], result: "i32" }).call(buffer, image.data.length),
-      "IBuffer.SetLength",
-    );
-
-    byteAccess = comQuery(buffer, IID_IBufferByteAccess);
-    const bytesOut = new BigUint64Array(1);
-    checkHR(
-      comMethod(byteAccess, 3, { parameters: ["pointer", "buffer"], result: "i32" }).call(byteAccess, bytesOut),
-      "IBufferByteAccess.Buffer",
-    );
-    ntdll.symbols.RtlMoveMemory(Deno.UnsafePointer.create(bytesOut[0]), image.data, image.data.length);
-
-    softwareStatics = activationFactory("Windows.Graphics.Imaging.SoftwareBitmap", IID_ISoftwareBitmapStatics);
-    const bitmapOut = new BigUint64Array(1);
-    checkHR(
-      comMethod(softwareStatics, 9, { parameters: ["pointer", "pointer", "i32", "i32", "i32", "buffer"], result: "i32" })
-        .call(softwareStatics, buffer, 87, image.rect.width, image.rect.height, bitmapOut),
-      "SoftwareBitmap.CreateCopyFromBuffer",
-    );
-    return Deno.UnsafePointer.create(bitmapOut[0]);
-  } finally {
-    comRelease(softwareStatics);
-    comRelease(byteAccess);
-    comRelease(buffer);
-    comRelease(bufferFactory);
-  }
+    buffer = comPtr(factory, 6, [image.data.length], ["u32"], "IBufferFactory.Create");
+    checkHR(comCall(buffer, 8, "i32", ["u32"], [image.data.length]), "IBuffer.SetLength");
+    access = comQuery(buffer, IID_IBufferByteAccess);
+    const bytes = comPtr(access, 3, [], [], "IBufferByteAccess.Buffer");
+    ntdll.symbols.RtlMoveMemory(bytes, image.data, image.data.length);
+    statics = activationFactory("Windows.Graphics.Imaging.SoftwareBitmap", IID_ISoftwareBitmapStatics);
+    return comPtr(statics, 9, [buffer, 87, image.rect.width, image.rect.height], ["pointer", "i32", "i32", "i32"], "SoftwareBitmap.CreateCopyFromBuffer");
+  } finally { comRelease(statics, access, buffer, factory); }
 }
 
 async function asyncResult(operation) {
   const info = comQuery(operation, IID_IAsyncInfo);
   try {
     for (;;) {
-      const status = new Int32Array(1);
-      checkHR(comMethod(info, 7, { parameters: ["pointer", "buffer"], result: "i32" }).call(info, status), "IAsyncInfo.Status");
-      if (status[0] === 1) break;
-      if (status[0] === 2) throw new Error("WinRT operation canceled");
-      if (status[0] === 3) {
-        const error = new Int32Array(1);
-        comMethod(info, 8, { parameters: ["pointer", "buffer"], result: "i32" }).call(info, error);
-        throw new Error(`WinRT operation failed: HRESULT 0x${(error[0] >>> 0).toString(16)}`);
+      const status = comOut(info, 7, Int32Array);
+      checkHR(status.hr, "IAsyncInfo.Status");
+      if (status.out[0] === 1) break;
+      if (status.out[0] === 2) throw new Error("WinRT operation canceled");
+      if (status.out[0] === 3) {
+        const error = comOut(info, 8, Int32Array).out[0];
+        throw new Error(`WinRT operation failed: HRESULT 0x${(error >>> 0).toString(16)}`);
       }
-      await wait({ ms: 5 });
+      await wait(5);
     }
-
-    const out = new BigUint64Array(1);
-    checkHR(
-      comMethod(operation, 8, { parameters: ["pointer", "buffer"], result: "i32" }).call(operation, out),
-      "IAsyncOperation.GetResults",
-    );
-    return out[0] ? Deno.UnsafePointer.create(out[0]) : null;
-  } finally {
-    comRelease(info);
-  }
+    return comPtr(operation, 8, [], [], "IAsyncOperation.GetResults");
+  } finally { comRelease(info); }
 }
 
 export async function ocr(options = {}) {
   const image = options.image ?? captureScreenshot(options);
   if (!image) return null;
-  const bitmap = softwareBitmapFromBGRA(image);
-  const statics = activationFactory("Windows.Media.Ocr.OcrEngine", IID_IOcrEngineStatics);
-  let engine;
-  let operation;
-  let result;
+  const bitmap = softwareBitmapFromBGRA(image), statics = activationFactory("Windows.Media.Ocr.OcrEngine", IID_IOcrEngineStatics);
+  let engine, operation, result;
   try {
-    const engineOut = new BigUint64Array(1);
-    checkHR(
-      comMethod(statics, 10, { parameters: ["pointer", "buffer"], result: "i32" }).call(statics, engineOut),
-      "OcrEngine.TryCreateFromUserProfileLanguages",
-    );
-    if (!engineOut[0]) throw new Error("Windows OCR engine unavailable for user languages");
-    engine = Deno.UnsafePointer.create(engineOut[0]);
-
-    const operationOut = new BigUint64Array(1);
-    checkHR(
-      comMethod(engine, 6, { parameters: ["pointer", "pointer", "buffer"], result: "i32" }).call(engine, bitmap, operationOut),
-      "OcrEngine.RecognizeAsync",
-    );
-    operation = Deno.UnsafePointer.create(operationOut[0]);
+    engine = comPtr(statics, 10, [], [], "OcrEngine.TryCreateFromUserProfileLanguages");
+    if (!engine) throw new Error("Windows OCR engine unavailable for user languages");
+    operation = comPtr(engine, 6, [bitmap], ["pointer"], "OcrEngine.RecognizeAsync");
     result = await asyncResult(operation);
-
-    const textOut = new BigUint64Array(1);
-    checkHR(
-      comMethod(result, 8, { parameters: ["pointer", "buffer"], result: "i32" }).call(result, textOut),
-      "OcrResult.Text",
-    );
-    const text = hstringText(textOut[0] ? Deno.UnsafePointer.create(textOut[0]) : null);
-    return { text, rect: image.rect };
-  } finally {
-    comRelease(result);
-    comRelease(operation);
-    comRelease(engine);
-    comRelease(statics);
-    comRelease(bitmap);
-  }
+    return { text: hstringText(comPtr(result, 8, [], [], "OcrResult.Text")), rect: image.rect };
+  } finally { comRelease(result, operation, engine, statics, bitmap); }
 }
 
 function paeth(a, b, c) {

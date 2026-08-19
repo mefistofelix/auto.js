@@ -57,7 +57,6 @@ function delay(value, action) { return new Promise((resolve) => setTimeout(resol
 export async function wait(options = 0) {
   if (!options || typeof options !== "object" || Array.isArray(options)) { await delay(options); return true; }
   const kinds = ["window", "ocr", "image", "change"].filter((key) => options[key] != null);
-  if (!kinds.length) { await delay(options.time ?? options.ms ?? 0, options); return true; }
   if (kinds.length !== 1) return null;
   const kind = kinds[0], prepared = await prepareWaitCondition(kind, options[kind]);
   if (!prepared) return null;
@@ -72,9 +71,7 @@ export async function wait(options = 0) {
 function ptrValue(pointer) { return pointer ? Deno.UnsafePointer.value(pointer) : 0n; }
 function ptrId(pointer) { return `0x${ptrValue(pointer).toString(16)}`; }
 function asPointer(value) {
-  if (!value) return null;
-  if (typeof value === "object") value = value.wid ?? value.hwnd ?? value.handle;
-  return ["string", "number", "bigint"].includes(typeof value) ? Deno.UnsafePointer.create(BigInt(value)) : value;
+  return value ? Deno.UnsafePointer.create(BigInt(value)) : null;
 }
 function wide(text, nul = false) { return Uint16Array.from({ length: text.length + (nul ? 1 : 0) }, (_, i) => text.charCodeAt(i) || 0); }
 function decodeWide(buffer, length = buffer.length) { return textDecoder16.decode(new Uint8Array(buffer.buffer, buffer.byteOffset, length * 2)); }
@@ -391,7 +388,7 @@ function captureArea(options = {}) {
     return rect && rect.width > 0 && rect.height > 0 ? { kind: "screen", ...rect } : null;
   }
   if (info) return { kind: "window", hwnd: asPointer(info.wid), ...info.rect };
-  if (options.all || options.desktop === "all") {
+  if (options.all) {
     const displays = displayRecords();
     if (!displays.length) return null;
     const x = Math.min(...displays.map((d) => d.x)), y = Math.min(...displays.map((d) => d.y));

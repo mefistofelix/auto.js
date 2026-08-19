@@ -301,12 +301,19 @@ try {
   );
   check("a11y filters, capabilities, actions, limit, cross-domain relations");
 
+  const selectedRange = input_sel({ window: { wid: editWindow.wid }, select: { start: 5, end: 10 } });
+  same(selectedRange?.text, "READY", "input_sel range select failed");
+  same(input_sel({ window: { wid: editWindow.wid }, read: true }), "READY", "input_sel read after range select failed");
+  const selectedRegex = input_sel({ window: { wid: editWindow.wid }, select: "edit\\s+r[a-z]+" });
+  same(selectedRegex?.text, EDIT_INITIAL, "input_sel regex select failed");
+  same(input_sel({ window: { wid: editWindow.wid }, select: true })?.text, EDIT_INITIAL, "input_sel select-all failed");
+  same((await run([{ input_sel: { window: { wid: editWindow.wid }, select: "READY$" } }])).results[0]?.text, "READY", "scenario input_sel regex select failed");
   same(input_sel({ window: { wid: editWindow.wid }, write: "Z" })?.length, 1, "input_sel write failed");
   const selectionWritten = window_get({ window: { wid: editWindow.wid }, text: true })?.text;
   assert(selectionWritten?.includes("Z") && selectionWritten !== EDIT_INITIAL, "input_sel write did not replace/insert at the current selection");
   a11y_action({ a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL });
   await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === EDIT_INITIAL, "selection test did not restore edit text");
-  check("input_sel read/write");
+  check("input_sel select/read/write");
 
   assert(await window_wait({ window: { wid: root.wid }, timeout: 500, interval: 20 }), "window_wait failed");
   assert(await wait({ window: { wid: root.wid }, timeout: 0 }), "wait.window immediate match failed");

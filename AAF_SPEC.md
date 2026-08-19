@@ -157,7 +157,7 @@ Every scenario action is an object with exactly one command key. The reference i
 **Input**
 
 - [`keyb`](#keyb) — press keys or type Unicode text.
-- [`input_sel`](#input_sel) — read or replace the current native text selection.
+- [`input_sel`](#input_sel) — read, set, or replace the current native text selection.
 - [`mouse_move`](#mouse_move) — move the physical pointer.
 - [`mouse_button`](#mouse_button) — click, hold, release, or scroll.
 - [`input_reset`](#input_reset) — release held input owned by AutoJS.
@@ -432,31 +432,44 @@ An object reporting each operation that was applied. Repeated `press` also repor
 
 ## `input_sel`
 
-*Read or replace the selected text of a supported native text control.*
+*Read, set, or replace the selected text of a supported native text control.*
 
 **Action input**
 
-- `read: true` — return the currently selected text.
+- `select: true` — select all text.
+- `select: {start, end}` — select the zero-based UTF-16 range from `start` to `end`.
+- `select: regex` — select the first case-insensitive regex match in the control text.
 - `write: text` — replace the current selection, or insert at the caret when the selection is empty.
+- `read: true` — return the currently selected text.
 - `window` — optional [window filter](#window-filters) selecting a native text control. When omitted, the focused native text control is used.
 
-Exactly one of `read` or `write` is allowed.
+Exactly one of `select`, `write`, or `read` is allowed. A regex string selects its complete first match; capture groups do not change the selected range. `select: true` is the unambiguous select-all form, leaving every string available as a regex.
 
 ```yaml
 - input_sel:
-    read: true
+    select: "order #[0-9]+"
 
 - input_sel:
     window: { class: "^Edit$" }
+    select: { start: 4, end: 9 }
+
+- input_sel:
+    select: true
+
+- input_sel:
     write: "replacement"
+
+- input_sel:
+    read: true
 ```
 
 On the current Windows backend, standard Edit/RichEdit controls use native selection messages. This is a text-input helper, not a `window` property and not an accessibility `select` operation.
 
 **Action output**
 
-- `read` → selected text string.
+- `select` → `{start, end, text}` for the selected range; no regex match returns `null`.
 - `write` → `{length: N}` with the replacement text length.
+- `read` → selected text string.
 - unsupported or unresolved text control → `null` outside the scenario diagnostic layer.
 
 ---

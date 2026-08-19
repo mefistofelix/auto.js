@@ -13,7 +13,7 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 - display discovery and W / WC / D coordinate references
 - physical and direct-target mouse input, including independent human-like movement path/timing and owned-input recovery
 - keyboard press/down/up/type, repeated presses, active-layout character mapping, and human/random timing
-- `input_sel` focused/targeted text-selection read/write plus clipboard read/write/clear
+- `input_sel` focused/targeted text selection by range or regex, plus read/write and clipboard read/write/clear
 - screenshots with WebP default and PNG support, retained scenario image resources, screenshot reuse, and caller-owned final-state images
 - Windows-native OCR through WinRT
 - polling waits for windows, OCR, images, and visual changes

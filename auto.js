@@ -19,7 +19,7 @@ const combase = dll("combase.dll", `RoInitialize i32 u32; RoGetActivationFactory
 const shcore = dll("shcore.dll", `GetScaleFactorForMonitor i32 pointer buffer`);
 try { user32.symbols.SetProcessDPIAware(); } catch { /* already configured is fine */ }
 const textDecoder16 = new TextDecoder("utf-16le"), POINTER_SIZE = 8, CF_UNICODETEXT = 13, PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, MONITOR_DEFAULTTONEAREST = 2, SRCCOPY = 0x00cc0020, PW_RENDERFULLCONTENT = 2;
-const WM_CLOSE = 0x10, WM_SETTEXT = 0x0c, WM_GETTEXT = 0x0d, WM_GETTEXTLENGTH = 0x0e, EM_GETSEL = 0xb0, EM_REPLACESEL = 0xc2, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205, WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208, WM_MOUSEWHEEL = 0x20a, WM_MOUSEHWHEEL = 0x20e;
+const WM_CLOSE = 0x10, WM_SETTEXT = 0x0c, WM_GETTEXT = 0x0d, WM_GETTEXTLENGTH = 0x0e, EM_GETSEL = 0xb0, EM_SETSEL = 0xb1, EM_REPLACESEL = 0xc2, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205, WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208, WM_MOUSEWHEEL = 0x20a, WM_MOUSEHWHEEL = 0x20e;
 const GA_PARENT = 1, GA_ROOT = 2, GW_HWNDPREV = 3, GW_OWNER = 4, GWL_STYLE = -16, GWL_EXSTYLE = -20, WS_CHILD = 0x40000000, WS_BORDER = 0x00800000, WS_DLGFRAME = 0x00400000, WS_CAPTION = WS_BORDER | WS_DLGFRAME;
 const WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000, WS_EX_LAYERED = 0x00080000, LWA_ALPHA = 2, FRAME_STYLE_MASK = WS_BORDER | WS_DLGFRAME | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 const SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOZORDER = 4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20, INPUT_MOUSE = 0, INPUT_KEYBOARD = 1, KEYEVENTF_EXTENDEDKEY = 1, KEYEVENTF_KEYUP = 2, KEYEVENTF_UNICODE = 4, MOUSEEVENTF_WHEEL = 0x0800, MOUSEEVENTF_HWHEEL = 0x1000, WHEEL_DELTA = 120;
@@ -222,12 +222,32 @@ function windowMessageText(hwnd) {
   const buffer = new Uint16Array(length + 1), written = sendMessage(hwnd,WM_GETTEXT,BigInt(buffer.length),Deno.UnsafePointer.of(buffer)); return written == null ? null : decodeWide(buffer,Math.min(Number(written),length));
 }
 function textControl(hwnd) { return /^(?:edit|richedit)/i.test(windowClass(hwnd)); }
-function selectedText(hwnd) {
+function selectionInfo(hwnd) {
   const text = windowMessageText(hwnd);
   if (text == null) return null;
   const start = new Uint32Array(1), end = new Uint32Array(1), out = new BigUint64Array(1);
   if (!user32.symbols.SendMessageTimeoutW(hwnd, EM_GETSEL, ptrValue(Deno.UnsafePointer.of(start)), Deno.UnsafePointer.of(end), 3, 250, out)) return null;
-  return text.slice(Math.min(start[0], end[0]), Math.max(start[0], end[0]));
+  const a = Math.min(start[0], end[0]), b = Math.max(start[0], end[0]);
+  return { start: a, end: b, text: text.slice(a, b) };
+}
+function setSelection(hwnd, select) {
+  const text = windowMessageText(hwnd);
+  if (text == null) return null;
+  let start, end;
+  if (select === true) { start = 0; end = text.length; }
+  else if (typeof select === "string") {
+    let match;
+    try { match = new RegExp(select, "i").exec(text); } catch { throw new Error(`Invalid regex: ${select}`); }
+    if (!match) return null;
+    start = match.index; end = start + match[0].length;
+  } else if (select && typeof select === "object" && !Array.isArray(select)) {
+    start = Number(select.start); end = Number(select.end);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < 0) return null;
+    start = Math.min(start, text.length); end = Math.min(end, text.length);
+  } else return null;
+  if (sendMessage(hwnd, EM_SETSEL, BigInt(start), asPointer(end)) == null) return null;
+  const a = Math.min(start, end), b = Math.max(start, end);
+  return { start: a, end: b, text: text.slice(a, b) };
 }
 function focusedControl() {
   const active = user32.symbols.GetForegroundWindow(); if (!active) return null;
@@ -236,12 +256,13 @@ function focusedControl() {
 }
 export function input_sel(options = {}) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
-  const read = own(options, "read"), write = own(options, "write");
-  if (read === write) throw new Error("input_sel requires exactly one of read, write");
+  const read = own(options, "read"), write = own(options, "write"), select = own(options, "select");
+  if (Number(read) + Number(write) + Number(select) !== 1) throw new Error("input_sel requires exactly one of read, write, select");
   const found = options.window == null ? null : windowRecords(options.window)[0];
   const hwnd = options.window == null ? focusedControl() : found ? asPointer(found.wid) : null;
   if (!hwnd || !textControl(hwnd)) return null;
-  if (read) return options.read === true ? selectedText(hwnd) : null;
+  if (read) return options.read === true ? selectionInfo(hwnd)?.text ?? null : null;
+  if (select) return setSelection(hwnd, options.select);
   const text = String(options.write ?? ""), data = wide(text, true);
   return sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(data)) == null ? null : { length: text.length };
 }

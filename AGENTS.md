@@ -62,7 +62,7 @@ Prefer micro-actions that compose cleanly instead of large opaque helpers. Examp
 - `a11y_find({a11y?, limit?})`
 - `a11y_action({a11y?, action, value?})`
 - `keyb({press?, down?, up?, type?, repeat?, interval?, duration?})`
-- `input_sel({read? | write?, window?})`
+- `input_sel({select? | write? | read?, window?})`
 - `mouse_move({pos?, display?, duration?, path?, steps?, window?})`
 - `mouse_button({click?, down?, up?, wheel?, hwheel?, window?, display?, pos?, repeat?, interval?})`
 - `input_reset()`
@@ -271,7 +271,7 @@ Keyboard input is exposed through the single `keyb` command. `press` is key down
 
 ## Text selection
 
-Expose one `input_sel` primitive with exactly one of `{read: true}` or `{write: text}` plus optional `window`. With `window`, resolve that native text control explicitly; without it, use the focused native text control. Read returns the selected text string. Write replaces the current selection or inserts at an empty caret and returns `{length}`. On Windows, standard Edit/RichEdit controls use `EM_GETSEL` + bounded live text for reads and `EM_REPLACESEL` for writes. Keep this in the input domain; it is not a window mutation and is unrelated to accessibility `select`.
+Expose one `input_sel` primitive with exactly one of `select`, `write`, or `read` plus optional `window`. With `window`, resolve that native text control explicitly; without it, use the focused native text control. `select: true` selects all text, `select: {start,end}` selects an explicit zero-based UTF-16 range, and a string `select` is a case-insensitive regex selecting its first complete match. Select returns `{start,end,text}`. Read returns only the selected text string. Write replaces the current selection or inserts at an empty caret and returns `{length}`. On Windows, standard Edit/RichEdit controls use `EM_GETSEL`, `EM_SETSEL`, bounded live text, and `EM_REPLACESEL`. Keep this in the input domain; it is not a window mutation and is unrelated to accessibility `select`.
 
 ## Clipboard
 
@@ -285,7 +285,7 @@ Clipboard text uses `CF_UNICODETEXT` through the native Win32 clipboard APIs. Cl
 
 ## Current end-to-end tests
 
-`examples/suite.js` is the primary self-contained regression suite. It launches a private Win32 fixture process implemented inside the example itself, creates a unique top-level window plus native Edit/Button/Static/nested child controls, and asserts behavior instead of merely exercising calls. It covers system lock detection/wake/awake; displays including scale; native window filters/tree relations/limits, Z-order, output client rect, and cross-process live text; native `input_sel` read/write; accessibility filters/capabilities/actions/limits and window↔a11y bridges; wait/window_wait; window control/set/highlight/hit; W/WC geometry; physical and direct-target mouse input including repeated clicks, horizontal wheel, separate `user` path / `user()` duration, and run-scoped hold cleanup; clipboard; `keyb` press/chords/type/down/up, repeated presses, active-layout character mapping, `$.curr`/`rand(...)` timing, human typing, duration-over-interval precedence, and input reset scoping; WebP/PNG screenshot save, OCR, WebP template matching, wait OCR/image/change; and `run` references/interpolation/state push/delete, `{results,state}` output, plus final-state image materialization. Temporary files, clipboard contents, cursor position, fixture window/process, awake state, and screenshot resources are cleaned up best-effort. Physical desktop assertions are skipped only when another system surface prevents the fixture from being interactively hit.
+`examples/suite.js` is the primary self-contained regression suite. It launches a private Win32 fixture process implemented inside the example itself, creates a unique top-level window plus native Edit/Button/Static/nested child controls, and asserts behavior instead of merely exercising calls. It covers system lock detection/wake/awake; displays including scale; native window filters/tree relations/limits, Z-order, output client rect, and cross-process live text; native `input_sel` select-by-range/regex, read, and write; accessibility filters/capabilities/actions/limits and window↔a11y bridges; wait/window_wait; window control/set/highlight/hit; W/WC geometry; physical and direct-target mouse input including repeated clicks, horizontal wheel, separate `user` path / `user()` duration, and run-scoped hold cleanup; clipboard; `keyb` press/chords/type/down/up, repeated presses, active-layout character mapping, `$.curr`/`rand(...)` timing, human typing, duration-over-interval precedence, and input reset scoping; WebP/PNG screenshot save, OCR, WebP template matching, wait OCR/image/change; and `run` references/interpolation/state push/delete, `{results,state}` output, plus final-state image materialization. Temporary files, clipboard contents, cursor position, fixture window/process, awake state, and screenshot resources are cleaned up best-effort. Physical desktop assertions are skipped only when another system surface prevents the fixture from being interactively hit.
 
 Run it before and after implementation simplification:
 

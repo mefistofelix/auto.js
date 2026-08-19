@@ -16,7 +16,7 @@ These principles apply across languages, runtimes, and frameworks.
 - Prefer direct language, runtime, and standard-library features over wrappers or custom replacements.
 - Do not introduce third-party dependencies without explicit approval.
 - Rely on native validation, errors, and defaults instead of reimplementing them.
-- Keep the origin of an operation visible when qualification improves clarity. Avoid redundant qualification when the imported symbol already communicates its origin.
+- Keep the origin of an operation visible when qualification improves clarity. Prefer repeating a short, meaningful qualified path such as `backend.foo` at each use instead of destructuring or aliasing it merely to remove repetition. Normalize to a local name only when the access path is genuinely long or noisy enough to obscure the surrounding logic; keep that alias close to where it is used. Avoid redundant qualification when the imported symbol already communicates its origin.
 - Do not hide ordinary public fields or attributes behind trivial accessors or properties.
 - In languages with type inference, avoid redundant annotations. Keep types where required or where they clarify a public boundary.
 

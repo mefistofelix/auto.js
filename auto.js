@@ -222,24 +222,28 @@ function windowMessageText(hwnd) {
   const buffer = new Uint16Array(length + 1), written = sendMessage(hwnd,WM_GETTEXT,BigInt(buffer.length),Deno.UnsafePointer.of(buffer)); return written == null ? null : decodeWide(buffer,Math.min(Number(written),length));
 }
 function textControl(hwnd) { return /^(?:edit|richedit)/i.test(windowClass(hwnd)); }
-function windowSelection(hwnd, text = windowMessageText(hwnd)) {
-  if (!textControl(hwnd)) return null;
-  const start = new Uint32Array(1), end = new Uint32Array(1), out = new BigUint64Array(1), startPtr = Deno.UnsafePointer.of(start);
-  if (!user32.symbols.SendMessageTimeoutW(hwnd, EM_GETSEL, ptrValue(startPtr), Deno.UnsafePointer.of(end), 3, 250, out)) return null;
-  const a = start[0], b = end[0]; return { start: a, end: b, text: text == null ? null : text.slice(Math.min(a,b), Math.max(a,b)) };
+function selectedText(hwnd) {
+  const text = windowMessageText(hwnd);
+  if (text == null) return null;
+  const start = new Uint32Array(1), end = new Uint32Array(1), out = new BigUint64Array(1);
+  if (!user32.symbols.SendMessageTimeoutW(hwnd, EM_GETSEL, ptrValue(Deno.UnsafePointer.of(start)), Deno.UnsafePointer.of(end), 3, 250, out)) return null;
+  return text.slice(Math.min(start[0], end[0]), Math.max(start[0], end[0]));
 }
 function focusedControl() {
   const active = user32.symbols.GetForegroundWindow(); if (!active) return null;
   const tid = user32.symbols.GetWindowThreadProcessId(active, new Uint32Array(1)), info = new Uint8Array(72), view = new DataView(info.buffer); view.setUint32(0, info.byteLength, true);
   if (!user32.symbols.GetGUIThreadInfo(tid, info)) return null; const value = view.getBigUint64(16, true); return value ? asPointer(value) : null;
 }
-function selectionTarget(window) { if (window == null) return focusedControl(); const found = windowRecords(window)[0]; return found ? asPointer(found.wid) : null; }
 export function input_sel(options = {}) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
-  const operations = ["read", "write"].filter((key) => own(options, key)); if (operations.length !== 1) throw new Error("input_sel requires exactly one of read, write");
-  const hwnd = selectionTarget(options.window); if (!hwnd || !textControl(hwnd)) return null;
-  if (operations[0] === "read") return options.read === true ? windowSelection(hwnd)?.text ?? null : null;
-  const text = String(options.write ?? ""), data = wide(text, true); return sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(data)) == null ? null : { length: text.length };
+  const read = own(options, "read"), write = own(options, "write");
+  if (read === write) throw new Error("input_sel requires exactly one of read, write");
+  const found = options.window == null ? null : windowRecords(options.window)[0];
+  const hwnd = options.window == null ? focusedControl() : found ? asPointer(found.wid) : null;
+  if (!hwnd || !textControl(hwnd)) return null;
+  if (read) return options.read === true ? selectedText(hwnd) : null;
+  const text = String(options.write ?? ""), data = wide(text, true);
+  return sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(data)) == null ? null : { length: text.length };
 }
 export function window_get({ window = {}, text = false } = {}) {
   const found = windowRecords(window)[0]; if (!found) return null; const out = publicWindow(found); if (text) out.text = windowMessageText(asPointer(found.wid)); return out;
@@ -402,10 +406,17 @@ function imageCodec(format, path) {
   if (codec !== "png" && codec !== "webp") throw new Error(`Unsupported image format: ${codec}`);
   return codec;
 }
+function swapRedBlue(data) {
+  const out = new Uint8Array(data).slice();
+  for (let i = 0; i < out.length; i += 4) {
+    const red = out[i];
+    out[i] = out[i + 2];
+    out[i + 2] = red;
+  }
+  return out;
+}
 function sharpImage({ rect: { width, height }, data }) {
-  const rgba = data.slice();
-  for (let i = 0; i < rgba.length; i += 4) { const red = rgba[i]; rgba[i] = rgba[i + 2]; rgba[i + 2] = red; }
-  return sharp(rgba, { raw: { width, height, channels: 4 } });
+  return sharp(swapRedBlue(data), { raw: { width, height, channels: 4 } });
 }
 async function saveImage(image, path, format) {
   if (!path) return {};
@@ -707,10 +718,10 @@ function clipboardWrite(text) {
 function clipboardClear() { return withClipboard(() => { if (!user32.symbols.EmptyClipboard()) throw new Error("EmptyClipboard failed"); return true; }); }
 export function clipboard(options = {}) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
-  const operations = ["read", "write", "clear"].filter((key) => own(options, key));
-  if (operations.length !== 1) throw new Error("clipboard requires exactly one of read, write, clear");
-  if (operations[0] === "read") return options.read === true ? clipboardRead() : null;
-  if (operations[0] === "clear") return options.clear === true ? clipboardClear() : null;
+  const read = own(options, "read"), write = own(options, "write"), clear = own(options, "clear");
+  if (Number(read) + Number(write) + Number(clear) !== 1) throw new Error("clipboard requires exactly one of read, write, clear");
+  if (read) return options.read === true ? clipboardRead() : null;
+  if (clear) return options.clear === true ? clipboardClear() : null;
   return clipboardWrite(options.write);
 }
 // Accessibility, COM, WinRT, and OCR
@@ -863,15 +874,21 @@ async function asyncResult(operation) {
   const info=comQuery(operation,IID_IAsyncInfo); try { for (;;) { const status=comOut(info,7,Int32Array); checkHR(status.hr,"IAsyncInfo.Status"); const s=status.out[0]; if (s===1) break; if (s===2) throw new Error("WinRT operation canceled"); if (s===3) { const error=comOut(info,8,Int32Array).out[0]; throw new Error(`WinRT operation failed: HRESULT 0x${(error>>>0).toString(16)}`); } await wait(5); } return comPtr(operation,8,[],[],"IAsyncOperation.GetResults"); }
   finally { comRelease(info); }
 }
+async function decodeImage(source, rect = {}, grayscale = false) {
+  const { data, info } = await sharp(source).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  return {
+    rect: { x: rect.x ?? 0, y: rect.y ?? 0, width: info.width, height: info.height },
+    format: "bgra8",
+    grayscale: !!grayscale,
+    data: swapRedBlue(data),
+  };
+}
 async function imageBGRA(image) {
   if (!image) return null;
   if (image.format === "bgra8") return image;
   if (!(image.data instanceof Uint8Array)) return null;
-  try {
-    const { data, info } = await sharp(image.data).ensureAlpha().raw().toBuffer({ resolveWithObject: true }), bgra = new Uint8Array(data).slice();
-    for (let i = 0; i < bgra.length; i += 4) { const red = bgra[i]; bgra[i] = bgra[i + 2]; bgra[i + 2] = red; }
-    return { rect: { x: image.rect?.x ?? 0, y: image.rect?.y ?? 0, width: info.width, height: info.height }, format: "bgra8", grayscale: !!image.grayscale, data: bgra };
-  } catch { return null; }
+  try { return await decodeImage(image.data, image.rect, image.grayscale); }
+  catch { return null; }
 }
 export async function ocr(options={}) {
   const image=options.image ? await imageBGRA(options.image) : captureScreenshot(options); if (!image) return null; const bitmap=softwareBitmapFromBGRA(image), statics=activationFactory("Windows.Media.Ocr.OcrEngine",IID_IOcrEngineStatics); let engine,operation,result;
@@ -880,11 +897,8 @@ export async function ocr(options={}) {
 }
 // Image matching and synchronization
 async function readImage(path) {
-  try {
-    const { data, info } = await sharp(path).ensureAlpha().raw().toBuffer({ resolveWithObject: true }), bgra = new Uint8Array(data).slice();
-    for (let i = 0; i < bgra.length; i += 4) { const red = bgra[i]; bgra[i] = bgra[i + 2]; bgra[i + 2] = red; }
-    return { rect: { x: 0, y: 0, width: info.width, height: info.height }, format: "bgra8", data: bgra };
-  } catch { return null; }
+  try { return await decodeImage(path); }
+  catch { return null; }
 }
 function rgbDiff(a, ai, b, bi) { return Math.abs(a[ai] - b[bi]) + Math.abs(a[ai + 1] - b[bi + 1]) + Math.abs(a[ai + 2] - b[bi + 2]); }
 function imageScoreAt(source, template, ox, oy, threshold) {
@@ -964,14 +978,12 @@ async function testWaitCondition(kind, prepared) {
   return none;
 }
 // Scenario resources and execution
-function resourceRefs(value, resources, found = new Set(), seen = new Set()) {
+function resourceRefs(value, resources, found = new Set()) {
   if (typeof value === "string") { if (resources.has(value)) found.add(value); return found; }
-  if (!value || typeof value !== "object" || seen.has(value)) return found;
-  seen.add(value);
-  for (const item of Object.values(value)) resourceRefs(item, resources, found, seen);
+  if (!value || typeof value !== "object") return found;
+  for (const item of Object.values(value)) resourceRefs(item, resources, found);
   return found;
 }
-function imageResource(resources, id) { const r = typeof id === "string" && resources.get(id); return r?.kind === "image" ? r.value : null; }
 function imageResult(id, image, saved = {}) { return { image: id, rect: image.rect, grayscale: image.grayscale, ...saved }; }
 function collectScenarioResources(resources, context) {
   const state = resourceRefs(context.state, resources), ret = resourceRefs(context.ret, resources);
@@ -985,14 +997,14 @@ async function scenarioScreenshot(options, resources) {
   const { save, format, ...capture } = options, image = captureScreenshot(capture);
   if (!image) return null;
   const id = crypto.randomUUID();
-  resources.set(id, { kind: "image", value: image, retained: false });
+  resources.set(id, { value: image, retained: false });
   try { return imageResult(id, image, await saveImage(image, save, format)); }
   catch (error) { resources.delete(id); throw error; }
 }
 async function scenarioScreenshotSave(options, resources) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
   const { image: id, save, format } = options, resource = resources.get(id);
-  if (!save || !resource?.retained || resource.kind !== "image") return null;
+  if (!save || !resource?.retained) return null;
   return imageResult(id, resource.value, await saveImage(resource.value, save, format));
 }
 function scenarioFail(error, details = {}) { throw Object.assign(new Error(error), { scenario: details }); }
@@ -1002,7 +1014,9 @@ function scenarioError(error, action) {
 }
 function resolveActionResources(name, value, resources) {
   if (name !== "ocr" || !value || typeof value !== "object" || typeof value.image !== "string") return value;
-  const image = imageResource(resources, value.image); if (!image) scenarioFail("image resource unavailable", { image: value.image }); return { ...value, image };
+  const resource = resources.get(value.image);
+  if (!resource) scenarioFail("image resource unavailable", { image: value.image });
+  return { ...value, image: resource.value };
 }
 const ACTIONS = { window_find, window_control, window_get, window_set, window_hit, a11y_find, a11y_action, keyb, input_sel, mouse_move, mouse_button, input_reset, clipboard, ocr, wait, display_find, system };
 const SCENARIO_PATH = /^\$\.(prev|ret|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/, STATE_PATH = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
@@ -1051,8 +1065,7 @@ function compileState(value, context, prefix = [], ops = []) {
       if (!Object.keys(item).length) ops.push(["object", path]); else compileState(item, context, path, ops);
       continue;
     }
-    const resolved = typeof item === "string" && item.startsWith("$.") ? scenarioReference(item, context) : resolveScenarioValue(item, context);
-    ops.push([key.push ? "push" : "set", path, resolved]);
+    ops.push([key.push ? "push" : "set", path, resolveScenarioValue(item, context)]);
   }
   return ops;
 }
@@ -1078,17 +1091,16 @@ async function outputImage(image) {
   try { return { rect: image.rect, format: "png", grayscale: image.grayscale, data: await sharpImage(image).png().toBuffer() }; }
   catch { return image; }
 }
-async function scenarioOutputState(value, resources, seen = new Map(), images = new Map()) {
+async function scenarioOutputState(value, resources, images = new Map()) {
   if (typeof value === "string") {
     const resource = resources.get(value);
-    if (resource?.kind !== "image") return value;
+    if (!resource) return value;
     if (!images.has(value)) images.set(value, outputImage(resource.value));
-    return await images.get(value);
+    return images.get(value);
   }
   if (!value || typeof value !== "object") return value;
-  if (seen.has(value)) return seen.get(value);
-  const out = Array.isArray(value) ? [] : {}; seen.set(value, out);
-  for (const [key, item] of Object.entries(value)) out[key] = await scenarioOutputState(item, resources, seen, images);
+  const out = Array.isArray(value) ? [] : {};
+  for (const [key, item] of Object.entries(value)) out[key] = await scenarioOutputState(item, resources, images);
   return out;
 }
 export async function run(actions = []) {

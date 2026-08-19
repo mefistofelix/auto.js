@@ -2351,203 +2351,101 @@ async function testWaitCondition(kind, prepared) {
 }
 
 function resourceRefs(value, resources, found = new Set(), seen = new Set()) {
-  if (typeof value === "string") {
-    if (resources.has(value)) found.add(value);
-    return found;
-  }
+  if (typeof value === "string") { if (resources.has(value)) found.add(value); return found; }
   if (!value || typeof value !== "object" || seen.has(value)) return found;
   seen.add(value);
-  if (Array.isArray(value)) {
-    for (const item of value) resourceRefs(item, resources, found, seen);
-  } else {
-    for (const item of Object.values(value)) resourceRefs(item, resources, found, seen);
-  }
+  for (const item of Object.values(value)) resourceRefs(item, resources, found, seen);
   return found;
 }
 
-function imageResource(resources, id) {
-  if (typeof id !== "string") return null;
-  const resource = resources.get(id);
-  return resource?.kind === "image" ? resource.value : null;
-}
+function imageResource(resources, id) { const r = typeof id === "string" && resources.get(id); return r?.kind === "image" ? r.value : null; }
+function imageResult(id, image, saved = {}) { return { image: id, rect: image.rect, grayscale: image.grayscale, ...saved }; }
 
 function collectScenarioResources(resources, context) {
-  const stateRefs = resourceRefs(context.state, resources);
-  const prevRefs = resourceRefs(context.prev, resources);
-
-  for (const id of stateRefs) {
-    const resource = resources.get(id);
-    if (resource) resource.retained = true;
-  }
-
+  const state = resourceRefs(context.state, resources), prev = resourceRefs(context.prev, resources);
   for (const [id, resource] of resources) {
-    if (resource.retained) {
-      if (!stateRefs.has(id)) resources.delete(id);
-    } else if (!stateRefs.has(id) && !prevRefs.has(id)) {
-      resources.delete(id);
-    }
+    if (state.has(id)) resource.retained = true;
+    else if (resource.retained || !prev.has(id)) resources.delete(id);
   }
 }
 
 async function scenarioScreenshot(options, resources) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
-  const { save, format = "png", ...capture } = options;
-  const image = captureScreenshot(capture);
+  const { save, format = "png", ...capture } = options, image = captureScreenshot(capture);
   if (!image) return null;
   const id = crypto.randomUUID();
   resources.set(id, { kind: "image", value: image, retained: false });
-
-  try {
-    const saved = await saveImage(image, save, format);
-    return {
-      image: id,
-      rect: image.rect,
-      grayscale: image.grayscale,
-      ...saved,
-    };
-  } catch (error) {
-    resources.delete(id);
-    throw error;
-  }
+  try { return imageResult(id, image, await saveImage(image, save, format)); }
+  catch (error) { resources.delete(id); throw error; }
 }
 
 async function scenarioScreenshotSave(options, resources) {
   if (!options || typeof options !== "object" || Array.isArray(options)) return null;
-  const { image: id, save, format = "png" } = options;
-  if (typeof id !== "string" || !save) return null;
-  const resource = resources.get(id);
-  if (!resource?.retained || resource.kind !== "image") return null;
-  const saved = await saveImage(resource.value, save, format);
-  return {
-    image: id,
-    rect: resource.value.rect,
-    grayscale: resource.value.grayscale,
-    ...saved,
-  };
+  const { image: id, save, format = "png" } = options, resource = resources.get(id);
+  if (!save || !resource?.retained || resource.kind !== "image") return null;
+  return imageResult(id, resource.value, await saveImage(resource.value, save, format));
 }
 
 function resolveActionResources(name, value, resources) {
-  if (name === "ocr" && value && typeof value === "object" && typeof value.image === "string") {
-    const image = imageResource(resources, value.image);
-    if (!image) return { ok: false };
-    return { ok: true, value: { ...value, image } };
-  }
-  return { ok: true, value };
+  if (name !== "ocr" || !value || typeof value !== "object" || typeof value.image !== "string") return { ok: true, value };
+  const image = imageResource(resources, value.image);
+  return image ? { ok: true, value: { ...value, image } } : { ok: false };
 }
 
-const ACTIONS = {
-  wait,
-  window_control,
-  window_set,
-  mouse_move,
-  mouse_button,
-  keyb,
-  clipboard,
-  ocr,
-  window_find,
-  window_get,
-  a11y_find,
-  display_find,
-  system,
-  window_hit,
-  highlight,
-};
+const ACTIONS = { wait, window_control, window_set, mouse_move, mouse_button, keyb, clipboard, ocr, window_find, window_get, a11y_find, display_find, system, window_hit, highlight };
+
+const SCENARIO_PATH = /^\$\.(prev|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/;
+const STATE_PATH = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
 
 function scenarioPath(path) {
-  const root = path.match(/^\$\.(prev|state)/);
-  if (!root) return null;
-  const parts = [root[1]];
-  let offset = root[0].length;
-  while (offset < path.length) {
-    const rest = path.slice(offset);
-    const property = rest.match(/^\.([A-Za-z_][A-Za-z0-9_-]*)/);
-    if (property) {
-      parts.push(property[1]);
-      offset += property[0].length;
-      continue;
-    }
-    const index = rest.match(/^\[(\d+)\]/);
-    if (index) {
-      parts.push(Number(index[1]));
-      offset += index[0].length;
-      continue;
-    }
-    return null;
-  }
-  return parts;
+  const match = typeof path === "string" ? path.match(SCENARIO_PATH) : null;
+  if (!match) return null;
+  const tail = [...match[2].matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)|\[(\d+)\]/g)];
+  return [match[1], ...tail.map((x) => x[1] ?? Number(x[2]))];
 }
 
 function scenarioReference(path, context) {
   const parts = scenarioPath(path);
   if (!parts) return { ok: false };
   let value = context[parts[0]];
-  for (let i = 1; i < parts.length; i++) {
-    const key = parts[i];
+  for (const key of parts.slice(1)) {
     if (value == null || !own(Object(value), key)) return { ok: false };
     value = value[key];
   }
   return { ok: true, value: structuredClone(value) };
 }
 
-function scenarioText(value) {
-  if (typeof value === "string") return value;
-  if (value && typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
-function regexEscape(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+function scenarioText(value) { return typeof value === "string" ? value : value && typeof value === "object" ? JSON.stringify(value) : String(value); }
+function regexEscape(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 function resolveScenarioString(value, context) {
   if (value.startsWith("$.")) return scenarioReference(value, context);
-
-  let failed = false;
+  let ok = true;
   const text = value.replace(/<<([^<>]+)>>/g, (placeholder, expression) => {
     const match = expression.match(/^(\$\..*?)(?:\|(re))?$/);
     if (!match) return placeholder;
     const resolved = scenarioReference(match[1], context);
-    if (!resolved.ok) {
-      failed = true;
-      return "";
-    }
+    if (!resolved.ok) { ok = false; return ""; }
     const text = scenarioText(resolved.value);
-    return match[2] === "re" ? regexEscape(text) : text;
+    return match[2] ? regexEscape(text) : text;
   });
-  return failed ? { ok: false } : { ok: true, value: text };
+  return ok ? { ok, value: text } : { ok };
 }
 
 function resolveScenarioValue(value, context) {
   if (typeof value === "string") return resolveScenarioString(value, context);
-  if (Array.isArray(value)) {
-    const out = [];
-    for (const item of value) {
-      const resolved = resolveScenarioValue(item, context);
-      if (!resolved.ok) return resolved;
-      out.push(resolved.value);
-    }
-    return { ok: true, value: out };
+  if (!value || typeof value !== "object") return { ok: true, value };
+  const out = Array.isArray(value) ? [] : {};
+  for (const [key, item] of Object.entries(value)) {
+    const resolved = resolveScenarioValue(item, context);
+    if (!resolved.ok) return resolved;
+    out[key] = resolved.value;
   }
-  if (value && typeof value === "object") {
-    const out = {};
-    for (const [key, item] of Object.entries(value)) {
-      const resolved = resolveScenarioValue(item, context);
-      if (!resolved.ok) return resolved;
-      out[key] = resolved.value;
-    }
-    return { ok: true, value: out };
-  }
-  return { ok: true, value };
+  return { ok: true, value: out };
 }
 
-function statePath(value) {
-  if (typeof value !== "string") return null;
-  const path = value.split(".");
-  if (!path.length || path.some((part) => !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(part))) return null;
-  return path;
-}
-
-function statePatchPath(value) {
+function statePath(value) { return typeof value === "string" && STATE_PATH.test(value) ? value.split(".") : null; }
+function stateKey(value) {
   if (typeof value !== "string") return null;
   const push = value.startsWith("&");
   const path = statePath(push ? value.slice(1) : value);
@@ -2557,10 +2455,7 @@ function statePatchPath(value) {
 function stateParent(root, path, create) {
   let target = root;
   for (const key of path.slice(0, -1)) {
-    if (!own(target, key)) {
-      if (!create) return null;
-      target[key] = Object.create(null);
-    } else if (!target[key] || typeof target[key] !== "object" || Array.isArray(target[key])) {
+    if (!own(target, key) || !target[key] || typeof target[key] !== "object" || Array.isArray(target[key])) {
       if (!create) return null;
       target[key] = Object.create(null);
     }
@@ -2569,110 +2464,65 @@ function stateParent(root, path, create) {
   return target;
 }
 
-const STATE_VALUE = Symbol("state-value");
-const STATE_PUSH = Symbol("state-push");
-
-function resolveStatePatch(value, context) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false };
-  const out = {};
-  for (const [key, item] of Object.entries(value)) {
-    const parsed = statePatchPath(key);
-    if (!parsed) return { ok: false };
-
-    if (parsed.push) {
+function compileState(value, context, prefix = [], ops = []) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  for (const [rawKey, item] of Object.entries(value)) {
+    const key = stateKey(rawKey);
+    if (!key) return null;
+    const path = [...prefix, ...key.path];
+    if (key.push) {
       const resolved = resolveScenarioValue(item, context);
-      if (!resolved.ok) return resolved;
-      out[key] = { [STATE_PUSH]: resolved.value };
-      continue;
-    }
-
-    if (typeof item === "string" && item.startsWith("$.")) {
+      if (!resolved.ok) return null;
+      ops.push(["push", path, resolved.value]);
+    } else if (typeof item === "string" && item.startsWith("$.")) {
       const resolved = scenarioReference(item, context);
-      if (!resolved.ok) return resolved;
-      out[key] = { [STATE_VALUE]: resolved.value };
-      continue;
+      if (!resolved.ok) return null;
+      ops.push(["set", path, resolved.value]);
+    } else if (item && typeof item === "object" && !Array.isArray(item)) {
+      if (!Object.keys(item).length) ops.push(["object", path]);
+      else if (!compileState(item, context, path, ops)) return null;
+    } else {
+      const resolved = resolveScenarioValue(item, context);
+      if (!resolved.ok) return null;
+      ops.push(["set", path, resolved.value]);
     }
-    if (item && typeof item === "object" && !Array.isArray(item)) {
-      const resolved = resolveStatePatch(item, context);
-      if (!resolved.ok) return resolved;
-      out[key] = resolved.value;
-      continue;
-    }
-    const resolved = resolveScenarioValue(item, context);
-    if (!resolved.ok) return resolved;
-    out[key] = resolved.value;
   }
-  return { ok: true, value: out };
+  return ops;
 }
 
 function resolveStateAction(value, context) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false };
-  const patch = {};
-  const remove = [];
-
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const patch = {}, remove = [];
   for (const [key, item] of Object.entries(value)) {
-    if (key === "-") {
-      if (!Array.isArray(item)) return { ok: false };
-      for (const name of item) {
-        const resolved = resolveScenarioValue(name, context);
-        if (!resolved.ok || typeof resolved.value !== "string") return { ok: false };
-        const path = statePath(resolved.value);
-        if (!path) return { ok: false };
-        remove.push(path);
-      }
-      continue;
+    if (key !== "-") { patch[key] = item; continue; }
+    if (!Array.isArray(item)) return null;
+    for (const name of item) {
+      const resolved = resolveScenarioValue(name, context);
+      const path = resolved.ok && statePath(resolved.value);
+      if (!path) return null;
+      remove.push(path);
     }
-    patch[key] = item;
   }
-
-  const resolved = resolveStatePatch(patch, context);
-  return resolved.ok ? { ok: true, patch: resolved.value, remove } : resolved;
+  const ops = compileState(patch, context);
+  return ops ? { ops, remove } : null;
 }
 
-function applyStatePatch(root, patch, prefix = []) {
-  if (!patch || typeof patch !== "object" || Array.isArray(patch)) return false;
-  for (const [rawKey, value] of Object.entries(patch)) {
-    const key = statePatchPath(rawKey);
-    if (!key) return false;
-    const path = [...prefix, ...key.path];
-
-    if (key.push) {
-      if (!value || typeof value !== "object" || !own(value, STATE_PUSH)) return false;
-      const parent = stateParent(root, path, true);
-      const leaf = path.at(-1);
+function applyStateOps(root, ops) {
+  for (const [op, path, value] of ops) {
+    const parent = stateParent(root, path, true), leaf = path.at(-1);
+    if (op === "push") {
       if (!own(parent, leaf)) parent[leaf] = [];
       if (!Array.isArray(parent[leaf])) return false;
-      parent[leaf].push(structuredClone(value[STATE_PUSH]));
-      continue;
-    }
-
-    if (value && typeof value === "object" && own(value, STATE_VALUE)) {
-      const parent = stateParent(root, path, true);
-      parent[path.at(-1)] = structuredClone(value[STATE_VALUE]);
-      continue;
-    }
-
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      const parent = stateParent(root, path, true);
-      const leaf = path.at(-1);
-      if (!own(parent, leaf) || !parent[leaf] || typeof parent[leaf] !== "object" || Array.isArray(parent[leaf])) {
-        parent[leaf] = Object.create(null);
-      }
-      if (!applyStatePatch(root, value, path)) return false;
-      continue;
-    }
-
-    const parent = stateParent(root, path, true);
-    parent[path.at(-1)] = structuredClone(value);
+      parent[leaf].push(structuredClone(value));
+    } else if (op === "object") {
+      if (!own(parent, leaf) || !parent[leaf] || typeof parent[leaf] !== "object" || Array.isArray(parent[leaf])) parent[leaf] = Object.create(null);
+    } else parent[leaf] = structuredClone(value);
   }
   return true;
 }
 
 export async function run(actions = []) {
-  const results = [];
-  const context = { prev: null, state: Object.create(null) };
-  const resources = new Map();
-
+  const results = [], context = { prev: null, state: Object.create(null) }, resources = new Map();
   try {
     for (const action of actions) {
       const entries = Object.entries(action);
@@ -2681,50 +2531,38 @@ export async function run(actions = []) {
 
       if (name === "state") {
         const resolved = resolveStateAction(params, context);
-        if (!resolved.ok) {
-          results.push(null);
-          continue;
+        let result = null;
+        if (resolved) {
+          const next = structuredClone(context.state);
+          if (applyStateOps(next, resolved.ops)) {
+            for (const path of resolved.remove) {
+              const parent = stateParent(next, path, false);
+              if (parent) delete parent[path.at(-1)];
+            }
+            context.state = next;
+            result = structuredClone(next);
+          }
         }
-        const next = structuredClone(context.state);
-        if (!applyStatePatch(next, resolved.patch)) {
-          results.push(null);
-          continue;
-        }
-        for (const path of resolved.remove) {
-          const parent = stateParent(next, path, false);
-          if (parent) delete parent[path.at(-1)];
-        }
-        context.state = next;
-        results.push(structuredClone(context.state));
+        results.push(result);
         collectScenarioResources(resources, context);
         continue;
       }
 
       let result = null;
       const resolved = resolveScenarioValue(params, context);
-      if (resolved.ok) {
-        try {
-          if (name === "screenshot") {
-            result = await scenarioScreenshot(resolved.value ?? {}, resources);
-          } else if (name === "screenshot_save") {
-            result = await scenarioScreenshotSave(resolved.value ?? {}, resources);
-          } else {
-            const fn = ACTIONS[name];
-            if (fn) {
-              const prepared = resolveActionResources(name, resolved.value ?? {}, resources);
-              if (prepared.ok) result = await fn(prepared.value);
-            }
-          }
-        } catch {
-          result = null;
+      if (resolved.ok) try {
+        const value = resolved.value ?? {};
+        if (name === "screenshot") result = await scenarioScreenshot(value, resources);
+        else if (name === "screenshot_save") result = await scenarioScreenshotSave(value, resources);
+        else if (ACTIONS[name]) {
+          const prepared = resolveActionResources(name, value, resources);
+          if (prepared.ok) result = await ACTIONS[name](prepared.value);
         }
-      }
+      } catch { /* best effort */ }
       results.push(result);
       context.prev = result;
       collectScenarioResources(resources, context);
     }
     return results;
-  } finally {
-    resources.clear();
-  }
+  } finally { resources.clear(); }
 }

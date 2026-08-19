@@ -4,17 +4,24 @@ AAF is a small declarative format for desktop automation. A scenario is an order
 
 **Micro glossary**
 
+**Concepts**
+
 | Term | Meaning |
 | --- | --- |
-| `action` | One scenario step containing exactly one command. |
-| `target` | A selector/filter resolved by an action. |
+| Action | One scenario step containing exactly one command. |
+| Target | A selector/filter resolved by an action. |
+| Image handle | Opaque run-scoped reference to a captured image resource. |
+
+**Fields and references**
+
+| Name | Meaning |
+| --- | --- |
 | `window` | Native-window target/filter. |
 | `a11y` | Accessibility-element target/filter. |
 | `wid` / `uid` | Opaque current identity for a window / accessibility element. |
 | `pos` / `rect` | Point / rectangle geometry. |
 | `$.prev` | Result of the most recent non-`state` action in the current run. |
 | `$.state` | Explicit temporary state owned by the current run. |
-| `image handle` | Opaque run-scoped reference to a captured image resource. |
 
 
 # 1. Quick start: automate Notepad

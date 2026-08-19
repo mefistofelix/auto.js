@@ -511,19 +511,34 @@ try {
   assert(results[7]?.bytes > 0, "screenshot_save first write failed");
   assert(results[8]?.text?.replace(/\s+/g, " ").toUpperCase().includes("IMAGE MARKER 7391"), "ocr.image resource failed");
   assert(results[10]?.bytes > 0, "resource should survive one deleted state reference");
-  same(results[12], null, "resource should be stale after last state reference is deleted");
+  same(results[12]?.error, "no result", "stale resource should return a diagnostic");
+  same(results[12]?.action, "screenshot_save", "stale resource diagnostic should identify the action");
   const bytes1 = await Deno.readFile(save1);
   const bytes2 = await Deno.readFile(save2);
   same(bytes1.length, bytes2.length, "resource saves differ in size");
   assert(bytes1.every((value, index) => value === bytes2[index]), "screenshot_save recaptured or changed resource bytes");
 
-  const unresolved = await run([
+  const diagnostics = await run([
     { window_find: { window: { wid: "$.state.missing" }, limit: 1 } },
+    { state: { "bad path": 1 } },
+    { unknown_action: {} },
+    {},
+    { keyb: { press: "a", repeat: 0 } },
     { display_find: { display: { index: 0 } } },
   ]);
-  same(unresolved[0], null, "missing scenario reference should produce null");
-  same(unresolved[1].length, 1, "run should continue after unresolved action");
-  check("run, prev/state, interpolation, push/delete, image resource lifetime");
+  same(diagnostics[0]?.error, "unresolved reference", "missing scenario reference should be diagnosed");
+  same(diagnostics[0]?.path, "$.state.missing", "reference diagnostic should include the path");
+  same(diagnostics[1]?.error, "invalid state path", "invalid state path should be diagnosed");
+  same(diagnostics[1]?.path, "bad path", "state diagnostic should include the path");
+  same(diagnostics[2]?.error, "unknown action", "unknown action should be diagnosed");
+  same(diagnostics[2]?.action, "unknown_action", "unknown-action diagnostic should identify the action");
+  same(diagnostics[3]?.error, "invalid action", "malformed action should be diagnosed instead of thrown");
+  same(diagnostics[4]?.error, "action failed", "runtime action failure should be diagnosed");
+  same(diagnostics[4]?.action, "keyb", "runtime diagnostic should identify the action");
+  assert(diagnostics[4]?.message?.includes("Invalid repeat"), "runtime diagnostic should preserve the concise cause");
+  same(diagnostics[5].length, 1, "run should continue after diagnosed failures");
+  same((await run({}))[0]?.error, "invalid scenario", "non-array scenario should be diagnosed");
+  check("run, prev/state, diagnostics, interpolation, push/delete, image resource lifetime");
 
   await window_set({ window: { wid: root.wid }, title: `AAF TEST FIXTURE ${token}` });
   await highlight({ window: { wid: root.wid }, duration: 20 });

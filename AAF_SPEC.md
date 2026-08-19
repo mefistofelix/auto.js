@@ -636,7 +636,7 @@ Modify temporary scenario state. Its detailed semantics are intentionally descri
     target: "$.prev[0]"
 ```
 
-**Output:** complete resulting state, or `null` if the patch is invalid.
+**Output:** complete resulting state. Inside `run()`, an invalid patch returns a concise diagnostic object such as `{error: "invalid state path", path: "bad path"}`; state and `$.prev` remain unchanged.
 
 ---
 
@@ -922,7 +922,29 @@ The automation primitives themselves remain stateless: each action resolves its 
 
 `run([...])` executes actions sequentially and returns one result per action in the same order.
 
-Normal scenario actions are best-effort. A missing target, unresolved reference, unsupported operation, or runtime failure normally produces `null` and execution continues. Find actions return `[]` for no matches. A malformed action object with more or fewer than one command key is invalid.
+Normal scenario actions are best-effort, but failures are **returned as data rather than thrown out of `run()`**. Each failed step produces a small JSON-compatible diagnostic object and execution continues. Find actions still return `[]` for a valid search with no matches. Direct primitive calls keep their documented direct-call behavior; this diagnostic layer belongs to `run()`.
+
+Typical diagnostics are intentionally compact:
+
+```yaml
+- error: unresolved reference
+  path: "$.state.missing"
+
+- error: invalid state path
+  path: "bad path"
+
+- error: unknown action
+  action: unknown_action
+
+- error: no result
+  action: screenshot_save
+
+- error: action failed
+  action: keyb
+  message: "Invalid repeat: 0"
+```
+
+`error` is the short category. Optional `action`, `path`, or `image` identifies what failed. `message` is used only when a concise underlying runtime cause is useful. Stack traces are not part of AAF output. A malformed action is reported as `error: invalid action`; a non-array `run()` input is reported as `error: invalid scenario`. A diagnostic from a non-`state` step becomes the new `$.prev`; a failed `state` step changes neither state nor `$.prev`.
 
 A new run starts with an empty state and no resources.
 
@@ -958,7 +980,7 @@ $.state.target
 $.state.items[2].name
 ```
 
-Indexes are zero-based. A missing path invalidates the step instead of silently becoming `null`.
+Indexes are zero-based. A missing path invalidates the step instead of silently becoming a `null` argument. `run()` returns `{error: "unresolved reference", path: "$.…"}` for that step.
 
 ### Text interpolation
 

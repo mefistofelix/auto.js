@@ -938,10 +938,14 @@ async function scenarioScreenshotSave(options, resources) {
   if (!save || !resource?.retained || resource.kind !== "image") return null;
   return imageResult(id, resource.value, await saveImage(resource.value, save, format));
 }
-const FAIL = Symbol("fail");
+function scenarioFail(error, details = {}) { throw Object.assign(new Error(error), { scenario: details }); }
+function scenarioError(error, action) {
+  if (error?.scenario) return { error: error.message, ...error.scenario };
+  return { error: "action failed", ...(action ? { action } : {}), message: error instanceof Error ? error.message : String(error) };
+}
 function resolveActionResources(name, value, resources) {
   if (name !== "ocr" || !value || typeof value !== "object" || typeof value.image !== "string") return value;
-  const image = imageResource(resources, value.image); return image ? { ...value, image } : FAIL;
+  const image = imageResource(resources, value.image); if (!image) scenarioFail("image resource unavailable", { image: value.image }); return { ...value, image };
 }
 const ACTIONS = { wait, window_control, window_set, mouse_move, mouse_button, keyb, clipboard, ocr, window_find, window_get, a11y_find, display_find, system, window_hit, highlight };
 const SCENARIO_PATH = /^\$\.(prev|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/, STATE_PATH = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
@@ -950,28 +954,25 @@ function scenarioPath(path) {
   return match ? [match[1], ...[...match[2].matchAll(/\.([A-Za-z_][A-Za-z0-9_-]*)|\[(\d+)\]/g)].map((x) => x[1] ?? Number(x[2]))] : null;
 }
 function scenarioReference(path, context) {
-  const parts = scenarioPath(path); if (!parts) return FAIL;
+  const parts = scenarioPath(path); if (!parts) scenarioFail("invalid reference", { path });
   let value = context[parts[0]];
-  for (const key of parts.slice(1)) { if (value == null || !own(Object(value), key)) return FAIL; value = value[key]; }
+  for (const key of parts.slice(1)) { if (value == null || !own(Object(value), key)) scenarioFail("unresolved reference", { path }); value = value[key]; }
   return structuredClone(value);
 }
 function scenarioText(value) { return typeof value === "string" ? value : value && typeof value === "object" ? JSON.stringify(value) : String(value); }
 function regexEscape(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 function resolveScenarioString(value, context) {
   if (value.startsWith("$.")) return scenarioReference(value, context);
-  let failed = false;
-  const text = value.replace(/<<([^<>]+)>>/g, (placeholder, expression) => {
+  return value.replace(/<<([^<>]+)>>/g, (placeholder, expression) => {
     const match = expression.match(/^(\$\..*?)(?:\|(re))?$/); if (!match) return placeholder;
-    const resolved = scenarioReference(match[1], context); if (resolved === FAIL) { failed = true; return ""; }
-    const text = scenarioText(resolved); return match[2] ? regexEscape(text) : text;
+    const text = scenarioText(scenarioReference(match[1], context)); return match[2] ? regexEscape(text) : text;
   });
-  return failed ? FAIL : text;
 }
 function resolveScenarioValue(value, context) {
   if (typeof value === "string") return resolveScenarioString(value, context);
   if (!value || typeof value !== "object") return value;
   const out = Array.isArray(value) ? [] : {};
-  for (const [key, item] of Object.entries(value)) { const resolved = resolveScenarioValue(item, context); if (resolved === FAIL) return FAIL; out[key] = resolved; }
+  for (const [key, item] of Object.entries(value)) out[key] = resolveScenarioValue(item, context);
   return out;
 }
 function statePath(value) { return typeof value === "string" && STATE_PATH.test(value) ? value.split(".") : null; }
@@ -985,73 +986,63 @@ function stateParent(root, path, create) {
   return target;
 }
 function compileState(value, context, prefix = [], ops = []) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) scenarioFail("invalid state patch");
   for (const [rawKey, item] of Object.entries(value)) {
-    const key = stateKey(rawKey); if (!key) return null;
+    const key = stateKey(rawKey); if (!key) scenarioFail("invalid state path", { path: rawKey });
     const path = [...prefix, ...key.path];
     if (!key.push && item && typeof item === "object" && !Array.isArray(item)) {
-      if (!Object.keys(item).length) ops.push(["object", path]); else if (!compileState(item, context, path, ops)) return null;
+      if (!Object.keys(item).length) ops.push(["object", path]); else compileState(item, context, path, ops);
       continue;
     }
     const resolved = typeof item === "string" && item.startsWith("$.") ? scenarioReference(item, context) : resolveScenarioValue(item, context);
-    if (resolved === FAIL) return null; ops.push([key.push ? "push" : "set", path, resolved]);
+    ops.push([key.push ? "push" : "set", path, resolved]);
   }
   return ops;
 }
 function resolveStateAction(value, context) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) scenarioFail("invalid state patch");
   const patch = {}, remove = [];
   for (const [key, item] of Object.entries(value)) {
     if (key !== "-") { patch[key] = item; continue; }
-    if (!Array.isArray(item)) return null;
-    for (const name of item) { const resolved = resolveScenarioValue(name, context), path = resolved !== FAIL && statePath(resolved); if (!path) return null; remove.push(path); }
+    if (!Array.isArray(item)) scenarioFail("invalid state delete");
+    for (const name of item) { const resolved = resolveScenarioValue(name, context), path = statePath(resolved); if (!path) scenarioFail("invalid state path", { path: String(resolved) }); remove.push(path); }
   }
-  const ops = compileState(patch, context); return ops && { ops, remove };
+  return { ops: compileState(patch, context), remove };
 }
 function applyStateOps(root, ops) {
   for (const [op, path, value] of ops) {
     const parent = stateParent(root, path, true), leaf = path.at(-1);
-    if (op === "push") { if (!own(parent, leaf)) parent[leaf] = []; if (!Array.isArray(parent[leaf])) return false; parent[leaf].push(structuredClone(value)); }
+    if (op === "push") { if (!own(parent, leaf)) parent[leaf] = []; if (!Array.isArray(parent[leaf])) scenarioFail("state target is not an array", { path: path.join(".") }); parent[leaf].push(structuredClone(value)); }
     else if (op === "object") { if (!own(parent, leaf) || !parent[leaf] || typeof parent[leaf] !== "object" || Array.isArray(parent[leaf])) parent[leaf] = Object.create(null); }
     else parent[leaf] = structuredClone(value);
   }
-  return true;
 }
 export async function run(actions = []) {
+  if (!Array.isArray(actions)) return [{ error: "invalid scenario", message: "actions must be an array" }];
   const results = [], context = { prev: null, state: Object.create(null) }, resources = new Map();
   try {
     for (const action of actions) {
-      const entries = Object.entries(action);
-      if (entries.length !== 1) throw new Error(`Each action must contain exactly one command: ${JSON.stringify(action)}`);
-      const [name, params] = entries[0];
-      if (name === "state") {
-        const resolved = resolveStateAction(params, context);
-        let result = null;
-        if (resolved) {
-          const next = structuredClone(context.state);
-          if (applyStateOps(next, resolved.ops)) {
-            for (const path of resolved.remove) {
-              const parent = stateParent(next, path, false);
-              if (parent) delete parent[path.at(-1)];
-            }
-            context.state = next;
-            result = structuredClone(next);
-          }
+      let name, result, stateStep = false;
+      try {
+        const entries = action && typeof action === "object" && !Array.isArray(action) ? Object.entries(action) : [];
+        if (entries.length !== 1) scenarioFail("invalid action", { message: "expected exactly one command" });
+        const params = entries[0][1]; name = entries[0][0]; stateStep = name === "state";
+        if (stateStep) {
+          const resolved = resolveStateAction(params, context), next = structuredClone(context.state);
+          applyStateOps(next, resolved.ops);
+          for (const path of resolved.remove) { const parent = stateParent(next, path, false); if (parent) delete parent[path.at(-1)]; }
+          context.state = next; result = structuredClone(next);
+        } else {
+          if (name !== "screenshot" && name !== "screenshot_save" && !ACTIONS[name]) scenarioFail("unknown action", { action: name });
+          const value = resolveScenarioValue(params, context) ?? {};
+          if (name === "screenshot") result = await scenarioScreenshot(value, resources);
+          else if (name === "screenshot_save") result = await scenarioScreenshotSave(value, resources);
+          else result = await ACTIONS[name](resolveActionResources(name, value, resources));
+          if (result == null) result = { error: "no result", action: name };
         }
-        results.push(result);
-        collectScenarioResources(resources, context);
-        continue;
-      }
-      let result = null;
-      const resolved = resolveScenarioValue(params, context);
-      if (resolved !== FAIL) try {
-        const value = resolved ?? {};
-        if (name === "screenshot") result = await scenarioScreenshot(value, resources);
-        else if (name === "screenshot_save") result = await scenarioScreenshotSave(value, resources);
-        else if (ACTIONS[name]) { const prepared = resolveActionResources(name, value, resources); if (prepared !== FAIL) result = await ACTIONS[name](prepared); }
-      } catch { /* best effort */ }
+      } catch (error) { result = scenarioError(error, name); }
       results.push(result);
-      context.prev = result;
+      if (!stateStep) context.prev = result;
       collectScenarioResources(resources, context);
     }
     return results;

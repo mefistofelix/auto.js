@@ -24,7 +24,7 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 
 - Windows x64
 - Deno
-- network access on first dependency resolution for `npm:sharp`; `deno.lock` pins the resolved dependency graph
+- network access on first dependency resolution for `npm:sharp`
 
 Run scripts with permissions sufficient for FFI, process creation, desktop input, and file access:
 
@@ -100,7 +100,6 @@ deno run -A examples/suite.js
 
 ```text
 auto.js               complete library implementation
-deno.json / deno.lock  Deno/Sharp dependency resolution
 AAF_SPEC.md            authoritative AAF specification
 examples/suite.js      self-contained regression suite
 examples/notepad.js    real-application integration example

@@ -229,25 +229,11 @@ function resolveActionResources(name, value, resources) {
   return { ...value, image };
 }
 
-const ACTIONS = {
-  window_find: backend.window_find,
-  window_control: backend.window_control,
-  window_get_prop: backend.window_get_prop,
-  window_set_prop: backend.window_set_prop,
-  window_hit: backend.window_hit,
-  a11y_find: backend.a11y_find,
-  a11y_action: backend.a11y_action,
-  keyb: backend.keyb,
-  input_sel: backend.input_sel,
-  mouse_move: backend.mouse_move,
-  mouse_button: backend.mouse_button,
-  input_reset: backend.input_reset,
-  clipboard: backend.clipboard,
-  ocr,
-  wait: backend.wait,
-  display_find: backend.display_find,
-  system: backend.system,
-};
+const ACTIONS = { ...backend, ocr };
+delete ACTIONS.captureScreenshot;
+delete ACTIONS.inputState;
+delete ACTIONS.releaseInput;
+delete ACTIONS.window_wait;
 
 const SCENARIO_PATH =
     /^\$\.(prev|ret|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/,

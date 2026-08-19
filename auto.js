@@ -2419,7 +2419,7 @@ export function a11y_action({ a11y = {}, action, value } = {}) {
   ) return null;
   return comUse(uiaResolve(a11y), (element) => {
     if (action === "focus") {
-      checkHR(comCall(element, 3, "i32"), "IUIAutomationElement.SetFocus");
+      if (comCall(element, 3, "i32") < 0) return null;
     } else {
       const spec = UIA_ACTION[action], pattern = uiaPattern(element, spec[0]);
       if (!pattern) return null;
@@ -2430,17 +2430,15 @@ export function a11y_action({ a11y = {}, action, value } = {}) {
           );
           if (!text) throw new Error("SysAllocString failed");
           try {
-            checkHR(
-              comCall(pattern, spec[1], "i32", ["pointer"], [text]),
-              "UI Automation set",
-            );
+            if (comCall(pattern, spec[1], "i32", ["pointer"], [text]) < 0) {
+              return null;
+            }
           } finally {
             oleaut32.symbols.SysFreeString(text);
           }
-        } else {checkHR(
-            comCall(pattern, spec[1], "i32"),
-            `UI Automation ${action}`,
-          );}
+        } else if (comCall(pattern, spec[1], "i32") < 0) {
+          return null;
+        }
       } finally {
         comRelease(pattern);
       }

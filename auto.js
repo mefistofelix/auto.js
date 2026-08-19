@@ -948,10 +948,6 @@ export async function ocr(options={}) {
   finally { comRelease(result,operation,engine,statics,bitmap); }
 }
 // Image matching and synchronization
-async function readImage(path) {
-  try { return await decodeImage(path); }
-  catch { return null; }
-}
 function rgbDiff(a, ai, b, bi) { return Math.abs(a[ai] - b[bi]) + Math.abs(a[ai + 1] - b[bi + 1]) + Math.abs(a[ai + 2] - b[bi + 2]); }
 function imageScoreAt(source, template, ox, oy, threshold) {
   const sw = source.rect.width, tw = template.rect.width, th = template.rect.height, total = tw * th * 765, max = (1 - threshold) * total;
@@ -1002,9 +998,12 @@ async function prepareWaitCondition(kind, spec) {
   if (kind === "image") {
     if (typeof spec === "string") spec = { path: spec };
     if (!spec || typeof spec !== "object" || !spec.path) return null;
-    const template = await readImage(spec.path); return template && { spec, template };
+    try {
+      return { spec, template: await decodeImage(spec.path) };
+    } catch {
+      return null;
+    }
   }
-  if (kind !== "change") return null;
   spec ??= {};
   if (typeof spec !== "object" || Array.isArray(spec)) return null;
   const percent = spec.percent == null ? 0 : Number(spec.percent);
@@ -1019,13 +1018,11 @@ async function testWaitCondition(kind, prepared) {
       const { path, similarity = .98, ...source } = prepared.spec, match = findImage(captureScreenshot(source), prepared.template, similarity);
       return { matched: !!match, value: match ? { path, ...match } : null };
     }
-    if (kind === "change") {
-      const { percent, ...source } = prepared.spec, image = captureScreenshot(source);
-      if (!image) return none;
-      if (!prepared.baseline) { prepared.baseline = image; return { ready: false, ...none }; }
-      const value = imageChange(prepared.baseline, image);
-      return { matched: !!value?.changed && value.percent >= Number(percent ?? 0), value };
-    }
+    const { percent, ...source } = prepared.spec, image = captureScreenshot(source);
+    if (!image) return none;
+    if (!prepared.baseline) { prepared.baseline = image; return { ready: false, ...none }; }
+    const value = imageChange(prepared.baseline, image);
+    return { matched: !!value?.changed && value.percent >= Number(percent ?? 0), value };
   } catch { /* unavailable target = false sample */ }
   return none;
 }

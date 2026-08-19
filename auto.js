@@ -891,19 +891,19 @@ const WINDOW_FRAMES = {
 };
 function setWindowTitle(hwnd, title) {
   const text = wide(String(title), true);
-  return sendMessage(hwnd, WM_SETTEXT, 0n, Deno.UnsafePointer.of(text)) != null;
+  sendMessage(hwnd, WM_SETTEXT, 0n, Deno.UnsafePointer.of(text));
 }
 
 function setWindowFrame(hwnd, frame) {
   const bits = WINDOW_FRAMES[String(frame).toLowerCase()];
-  if (bits == null) return false;
+  if (bits == null) return;
   const style = user32.symbols.GetWindowLongW(hwnd, GWL_STYLE) >>> 0;
   user32.symbols.SetWindowLongW(
     hwnd,
     GWL_STYLE,
     ((style & ~FRAME_STYLE_MASK) | bits) | 0,
   );
-  return !!user32.symbols.SetWindowPos(
+  user32.symbols.SetWindowPos(
     hwnd,
     null,
     0,
@@ -915,7 +915,7 @@ function setWindowFrame(hwnd, frame) {
 }
 
 function setWindowTopmost(hwnd, value) {
-  return !!user32.symbols.SetWindowPos(
+  user32.symbols.SetWindowPos(
     hwnd,
     Deno.UnsafePointer.create(
       value ? 0xffffffffffffffffn : 0xfffffffffffffffen,
@@ -930,12 +930,12 @@ function setWindowTopmost(hwnd, value) {
 
 function setWindowOpacity(hwnd, opacity) {
   opacity = Number(opacity);
-  if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) return false;
+  if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) return;
   const ex = user32.symbols.GetWindowLongW(hwnd, GWL_EXSTYLE) >>> 0;
   if (!(ex & WS_EX_LAYERED)) {
     user32.symbols.SetWindowLongW(hwnd, GWL_EXSTYLE, (ex | WS_EX_LAYERED) | 0);
   }
-  return !!user32.symbols.SetLayeredWindowAttributes(
+  user32.symbols.SetLayeredWindowAttributes(
     hwnd,
     0,
     Math.round(opacity * 255),

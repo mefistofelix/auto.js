@@ -1,166 +1,67 @@
 // auto.js — Windows desktop automation for Deno, pure FFI.
 // Current target: Windows x64 + Deno. No native addon, no C/C++, no dependencies.
 
-if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") {
-  throw new Error("auto.js currently supports Windows x64 only");
+if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") throw new Error("auto.js currently supports Windows x64 only");
+
+function dll(name, text) {
+  const symbols = {};
+  for (const spec of text.split(/[;\n]/).map((x) => x.trim()).filter(Boolean)) {
+    const [symbol, result, ...parameters] = spec.split(/\s+/);
+    symbols[symbol] = { parameters, result };
+  }
+  return Deno.dlopen(name, symbols);
 }
 
-const user32 = Deno.dlopen("user32.dll", {
-  EnumWindows: { parameters: ["pointer", "pointer"], result: "i32" },
-  EnumChildWindows: { parameters: ["pointer", "pointer", "pointer"], result: "i32" },
-  EnumDisplayMonitors: { parameters: ["pointer", "pointer", "pointer", "pointer"], result: "i32" },
-  GetMonitorInfoW: { parameters: ["pointer", "buffer"], result: "i32" },
-  GetWindowTextLengthW: { parameters: ["pointer"], result: "i32" },
-  GetWindowTextW: { parameters: ["pointer", "buffer", "i32"], result: "i32" },
-  GetClassNameW: { parameters: ["pointer", "buffer", "i32"], result: "i32" },
-  GetWindowThreadProcessId: { parameters: ["pointer", "buffer"], result: "u32" },
-  GetKeyboardLayout: { parameters: ["u32"], result: "pointer" },
-  VkKeyScanExW: { parameters: ["u16", "pointer"], result: "i16" },
-  MapVirtualKeyExW: { parameters: ["u32", "u32", "pointer"], result: "u32" },
-  GetWindowRect: { parameters: ["pointer", "buffer"], result: "i32" },
-  GetWindowLongW: { parameters: ["pointer", "i32"], result: "i32" },
-  SetWindowLongW: { parameters: ["pointer", "i32", "i32"], result: "i32" },
-  GetWindow: { parameters: ["pointer", "u32"], result: "pointer" },
-  GetClientRect: { parameters: ["pointer", "buffer"], result: "i32" },
-  ClientToScreen: { parameters: ["pointer", "buffer"], result: "i32" },
-  IsWindowVisible: { parameters: ["pointer"], result: "i32" },
-  IsWindowEnabled: { parameters: ["pointer"], result: "i32" },
-  IsIconic: { parameters: ["pointer"], result: "i32" },
-  IsZoomed: { parameters: ["pointer"], result: "i32" },
-  MonitorFromWindow: { parameters: ["pointer", "u32"], result: "pointer" },
-  ShowWindow: { parameters: ["pointer", "i32"], result: "i32" },
-  SetWindowPos: { parameters: ["pointer", "pointer", "i32", "i32", "i32", "i32", "u32"], result: "i32" },
-  SetForegroundWindow: { parameters: ["pointer"], result: "i32" },
-  BringWindowToTop: { parameters: ["pointer"], result: "i32" },
-  SetFocus: { parameters: ["pointer"], result: "pointer" },
-  GetForegroundWindow: { parameters: [], result: "pointer" },
-  AttachThreadInput: { parameters: ["u32", "u32", "i32"], result: "i32" },
-  PostMessageW: { parameters: ["pointer", "u32", "usize", "isize"], result: "i32" },
-  SendMessageTimeoutW: { parameters: ["pointer", "u32", "usize", "pointer", "u32", "u32", "buffer"], result: "isize" },
-  EnableWindow: { parameters: ["pointer", "i32"], result: "i32" },
-  SetLayeredWindowAttributes: { parameters: ["pointer", "u32", "u8", "u32"], result: "i32" },
-  GetDC: { parameters: ["pointer"], result: "pointer" },
-  ReleaseDC: { parameters: ["pointer", "pointer"], result: "i32" },
-  RegisterClassExW: { parameters: ["buffer"], result: "u16" },
-  CreateWindowExW: { parameters: ["u32", "buffer", "buffer", "u32", "i32", "i32", "i32", "i32", "pointer", "pointer", "pointer", "pointer"], result: "pointer" },
-  DefWindowProcW: { parameters: ["pointer", "u32", "usize", "isize"], result: "isize" },
-  DestroyWindow: { parameters: ["pointer"], result: "i32" },
-  UpdateWindow: { parameters: ["pointer"], result: "i32" },
-  FillRect: { parameters: ["pointer", "buffer", "pointer"], result: "i32" },
-  PrintWindow: { parameters: ["pointer", "pointer", "u32"], result: "i32" },
-  SetCursorPos: { parameters: ["i32", "i32"], result: "i32" },
-  GetCursorPos: { parameters: ["buffer"], result: "i32" },
-  SendInput: { parameters: ["u32", "buffer", "i32"], result: "u32" },
-  WindowFromPoint: { parameters: ["u64"], result: "pointer" },
-  GetAncestor: { parameters: ["pointer", "u32"], result: "pointer" },
-  SetProcessDPIAware: { parameters: [], result: "i32" },
-  OpenClipboard: { parameters: ["pointer"], result: "i32" },
-  CloseClipboard: { parameters: [], result: "i32" },
-  EmptyClipboard: { parameters: [], result: "i32" },
-  GetClipboardData: { parameters: ["u32"], result: "pointer" },
-  SetClipboardData: { parameters: ["u32", "pointer"], result: "pointer" },
-  IsClipboardFormatAvailable: { parameters: ["u32"], result: "i32" },
-});
-
-const kernel32 = Deno.dlopen("kernel32.dll", {
-  OpenProcess: { parameters: ["u32", "i32", "u32"], result: "pointer" },
-  QueryFullProcessImageNameW: { parameters: ["pointer", "u32", "buffer", "buffer"], result: "i32" },
-  CloseHandle: { parameters: ["pointer"], result: "i32" },
-  GetCurrentThreadId: { parameters: [], result: "u32" },
-  GlobalAlloc: { parameters: ["u32", "usize"], result: "pointer" },
-  GlobalLock: { parameters: ["pointer"], result: "pointer" },
-  GlobalUnlock: { parameters: ["pointer"], result: "i32" },
-  GlobalFree: { parameters: ["pointer"], result: "pointer" },
-  GetModuleHandleW: { parameters: ["pointer"], result: "pointer" },
-  SetThreadExecutionState: { parameters: ["u32"], result: "u32" },
-});
-
-const gdi32 = Deno.dlopen("gdi32.dll", {
-  CreateCompatibleDC: { parameters: ["pointer"], result: "pointer" },
-  DeleteDC: { parameters: ["pointer"], result: "i32" },
-  CreateDIBSection: { parameters: ["pointer", "buffer", "u32", "buffer", "pointer", "u32"], result: "pointer" },
-  SelectObject: { parameters: ["pointer", "pointer"], result: "pointer" },
-  DeleteObject: { parameters: ["pointer"], result: "i32" },
-  CreateSolidBrush: { parameters: ["u32"], result: "pointer" },
-  BitBlt: { parameters: ["pointer", "i32", "i32", "i32", "i32", "pointer", "i32", "i32", "u32"], result: "i32" },
-});
-
-const ntdll = Deno.dlopen("ntdll.dll", {
-  RtlMoveMemory: { parameters: ["pointer", "buffer", "usize"], result: "void" },
-});
-
-const wtsapi32 = Deno.dlopen("wtsapi32.dll", {
-  WTSQuerySessionInformationW: { parameters: ["pointer", "u32", "u32", "buffer", "buffer"], result: "i32" },
-  WTSFreeMemory: { parameters: ["pointer"], result: "void" },
-});
-
-const ole32 = Deno.dlopen("ole32.dll", {
-  CoInitializeEx: { parameters: ["pointer", "u32"], result: "i32" },
-  CoCreateInstance: { parameters: ["buffer", "pointer", "u32", "buffer", "buffer"], result: "i32" },
-});
-
-const oleaut32 = Deno.dlopen("oleaut32.dll", {
-  SysStringLen: { parameters: ["pointer"], result: "u32" },
-  SysFreeString: { parameters: ["pointer"], result: "void" },
-  SafeArrayGetLBound: { parameters: ["pointer", "u32", "buffer"], result: "i32" },
-  SafeArrayGetUBound: { parameters: ["pointer", "u32", "buffer"], result: "i32" },
-  SafeArrayAccessData: { parameters: ["pointer", "buffer"], result: "i32" },
-  SafeArrayUnaccessData: { parameters: ["pointer"], result: "i32" },
-  SafeArrayDestroy: { parameters: ["pointer"], result: "i32" },
-  VariantClear: { parameters: ["buffer"], result: "i32" },
-});
-
-const combase = Deno.dlopen("combase.dll", {
-  RoInitialize: { parameters: ["u32"], result: "i32" },
-  RoGetActivationFactory: { parameters: ["pointer", "buffer", "buffer"], result: "i32" },
-  WindowsCreateString: { parameters: ["buffer", "u32", "buffer"], result: "i32" },
-  WindowsDeleteString: { parameters: ["pointer"], result: "i32" },
-  WindowsGetStringRawBuffer: { parameters: ["pointer", "buffer"], result: "pointer" },
-});
+const user32 = dll("user32.dll", `
+EnumWindows i32 pointer pointer; EnumChildWindows i32 pointer pointer pointer; EnumDisplayMonitors i32 pointer pointer pointer pointer
+GetMonitorInfoW i32 pointer buffer; GetWindowTextLengthW i32 pointer; GetWindowTextW i32 pointer buffer i32; GetClassNameW i32 pointer buffer i32
+GetWindowThreadProcessId u32 pointer buffer; GetKeyboardLayout pointer u32; VkKeyScanExW i16 u16 pointer; MapVirtualKeyExW u32 u32 u32 pointer
+GetWindowRect i32 pointer buffer; GetWindowLongW i32 pointer i32; SetWindowLongW i32 pointer i32 i32; GetWindow pointer pointer u32
+GetClientRect i32 pointer buffer; ClientToScreen i32 pointer buffer; IsWindowVisible i32 pointer; IsWindowEnabled i32 pointer; IsIconic i32 pointer; IsZoomed i32 pointer
+MonitorFromWindow pointer pointer u32; ShowWindow i32 pointer i32; SetWindowPos i32 pointer pointer i32 i32 i32 i32 u32
+SetForegroundWindow i32 pointer; BringWindowToTop i32 pointer; SetFocus pointer pointer; GetForegroundWindow pointer; AttachThreadInput i32 u32 u32 i32
+PostMessageW i32 pointer u32 usize isize; SendMessageTimeoutW isize pointer u32 usize pointer u32 u32 buffer
+EnableWindow i32 pointer i32; SetLayeredWindowAttributes i32 pointer u32 u8 u32; GetDC pointer pointer; ReleaseDC i32 pointer pointer
+RegisterClassExW u16 buffer; CreateWindowExW pointer u32 buffer buffer u32 i32 i32 i32 i32 pointer pointer pointer pointer
+DefWindowProcW isize pointer u32 usize isize; DestroyWindow i32 pointer; UpdateWindow i32 pointer; FillRect i32 pointer buffer pointer; PrintWindow i32 pointer pointer u32
+SetCursorPos i32 i32 i32; GetCursorPos i32 buffer; SendInput u32 u32 buffer i32; WindowFromPoint pointer u64; GetAncestor pointer pointer u32; SetProcessDPIAware i32
+OpenClipboard i32 pointer; CloseClipboard i32; EmptyClipboard i32; GetClipboardData pointer u32; SetClipboardData pointer u32 pointer; IsClipboardFormatAvailable i32 u32
+`);
+const kernel32 = dll("kernel32.dll", `
+OpenProcess pointer u32 i32 u32; QueryFullProcessImageNameW i32 pointer u32 buffer buffer; CloseHandle i32 pointer; GetCurrentThreadId u32
+GlobalAlloc pointer u32 usize; GlobalLock pointer pointer; GlobalUnlock i32 pointer; GlobalFree pointer pointer; GetModuleHandleW pointer pointer; SetThreadExecutionState u32 u32
+`);
+const gdi32 = dll("gdi32.dll", `
+CreateCompatibleDC pointer pointer; DeleteDC i32 pointer; CreateDIBSection pointer pointer buffer u32 buffer pointer u32; SelectObject pointer pointer pointer
+DeleteObject i32 pointer; CreateSolidBrush pointer u32; BitBlt i32 pointer i32 i32 i32 i32 pointer i32 i32 u32
+`);
+const ntdll = dll("ntdll.dll", `RtlMoveMemory void pointer buffer usize`);
+const wtsapi32 = dll("wtsapi32.dll", `WTSQuerySessionInformationW i32 pointer u32 u32 buffer buffer; WTSFreeMemory void pointer`);
+const ole32 = dll("ole32.dll", `CoInitializeEx i32 pointer u32; CoCreateInstance i32 buffer pointer u32 buffer buffer`);
+const oleaut32 = dll("oleaut32.dll", `
+SysStringLen u32 pointer; SysFreeString void pointer; SafeArrayGetLBound i32 pointer u32 buffer; SafeArrayGetUBound i32 pointer u32 buffer
+SafeArrayAccessData i32 pointer buffer; SafeArrayUnaccessData i32 pointer; SafeArrayDestroy i32 pointer; VariantClear i32 buffer
+`);
+const combase = dll("combase.dll", `
+RoInitialize i32 u32; RoGetActivationFactory i32 pointer buffer buffer; WindowsCreateString i32 buffer u32 buffer
+WindowsDeleteString i32 pointer; WindowsGetStringRawBuffer pointer pointer buffer
+`);
 
 try { user32.symbols.SetProcessDPIAware(); } catch { /* already configured is fine */ }
 
 const textDecoder16 = new TextDecoder("utf-16le");
-const POINTER_SIZE = 8;
-const CF_UNICODETEXT = 13;
-const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
-const MONITOR_DEFAULTTONEAREST = 2;
-const SRCCOPY = 0x00cc0020;
-const PW_RENDERFULLCONTENT = 2;
-const WM_CLOSE = 0x0010;
-const WM_SETTEXT = 0x000c;
-const WM_GETTEXT = 0x000d;
-const WM_GETTEXTLENGTH = 0x000e;
-const WM_LBUTTONDOWN = 0x0201;
-const WM_LBUTTONUP = 0x0202;
-const WM_RBUTTONDOWN = 0x0204;
-const WM_RBUTTONUP = 0x0205;
-const WM_MBUTTONDOWN = 0x0207;
-const WM_MBUTTONUP = 0x0208;
-const WM_MOUSEWHEEL = 0x020a;
-const GA_PARENT = 1;
-const GA_ROOT = 2;
-const GW_OWNER = 4;
-const GWL_STYLE = -16;
-const GWL_EXSTYLE = -20;
-const WS_CHILD = 0x40000000;
-const WS_BORDER = 0x00800000;
-const WS_DLGFRAME = 0x00400000;
-const WS_CAPTION = WS_BORDER | WS_DLGFRAME;
-const WS_THICKFRAME = 0x00040000;
-const WS_SYSMENU = 0x00080000;
-const WS_MINIMIZEBOX = 0x00020000;
-const WS_MAXIMIZEBOX = 0x00010000;
-const WS_EX_LAYERED = 0x00080000;
-const LWA_ALPHA = 0x00000002;
+const POINTER_SIZE = 8, CF_UNICODETEXT = 13, PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, MONITOR_DEFAULTTONEAREST = 2;
+const SRCCOPY = 0x00cc0020, PW_RENDERFULLCONTENT = 2;
+const WM_CLOSE = 0x0010, WM_SETTEXT = 0x000c, WM_GETTEXT = 0x000d, WM_GETTEXTLENGTH = 0x000e;
+const WM_LBUTTONDOWN = 0x0201, WM_LBUTTONUP = 0x0202, WM_RBUTTONDOWN = 0x0204, WM_RBUTTONUP = 0x0205;
+const WM_MBUTTONDOWN = 0x0207, WM_MBUTTONUP = 0x0208, WM_MOUSEWHEEL = 0x020a;
+const GA_PARENT = 1, GA_ROOT = 2, GW_OWNER = 4, GWL_STYLE = -16, GWL_EXSTYLE = -20;
+const WS_CHILD = 0x40000000, WS_BORDER = 0x00800000, WS_DLGFRAME = 0x00400000, WS_CAPTION = WS_BORDER | WS_DLGFRAME;
+const WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000;
+const WS_EX_LAYERED = 0x00080000, LWA_ALPHA = 2;
 const FRAME_STYLE_MASK = WS_BORDER | WS_DLGFRAME | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-const INPUT_MOUSE = 0;
-const INPUT_KEYBOARD = 1;
-const KEYEVENTF_EXTENDEDKEY = 0x0001;
-const KEYEVENTF_KEYUP = 0x0002;
-const KEYEVENTF_UNICODE = 0x0004;
-const MOUSEEVENTF_WHEEL = 0x0800;
-const WHEEL_DELTA = 120;
+const INPUT_MOUSE = 0, INPUT_KEYBOARD = 1, KEYEVENTF_EXTENDEDKEY = 1, KEYEVENTF_KEYUP = 2, KEYEVENTF_UNICODE = 4;
+const MOUSEEVENTF_WHEEL = 0x0800, WHEEL_DELTA = 120;
 
 function sleepSync(ms) {
   const a = new Int32Array(new SharedArrayBuffer(4));
@@ -212,13 +113,8 @@ export async function wait(options = 0) {
   }
 }
 
-function ptrValue(pointer) {
-  return pointer ? Deno.UnsafePointer.value(pointer) : 0n;
-}
-
-function ptrId(pointer) {
-  return `0x${ptrValue(pointer).toString(16)}`;
-}
+function ptrValue(pointer) { return pointer ? Deno.UnsafePointer.value(pointer) : 0n; }
+function ptrId(pointer) { return `0x${ptrValue(pointer).toString(16)}`; }
 
 function asPointer(value) {
   if (!value) return null;
@@ -235,9 +131,7 @@ function wide(text, nul = false) {
   return out;
 }
 
-function decodeWide(buffer, length = buffer.length) {
-  return textDecoder16.decode(new Uint8Array(buffer.buffer, buffer.byteOffset, length * 2));
-}
+function decodeWide(buffer, length = buffer.length) { return textDecoder16.decode(new Uint8Array(buffer.buffer, buffer.byteOffset, length * 2)); }
 
 function rectFromBuffer(buffer) {
   const v = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
@@ -322,15 +216,9 @@ function displayRecords() {
 }
 
 export function display_find({ display } = {}) {
-  const found = displayRecords().map(({ index, primary, width, height, work }) => ({
-    index,
-    primary,
-    width,
-    height,
-    work: { width: work.width, height: work.height },
-  }));
+  const found = displayRecords().map(({ index, primary, width, height, work }) => ({ index, primary, width, height, work: { width: work.width, height: work.height } }));
   if (display == null) return found;
-  const index = typeof display === "object" ? Number(display.index) : Number(display);
+  const index = Number(typeof display === "object" ? display.index : display);
   return Number.isInteger(index) ? found.filter((x) => x.index === index) : [];
 }
 
@@ -344,9 +232,7 @@ function resolveDisplay(display) {
   return list[index];
 }
 
-function displayMap() {
-  return new Map(displayRecords().map((x) => [x.handle.toLowerCase(), x]));
-}
+function displayMap() { return new Map(displayRecords().map((x) => [x.handle.toLowerCase(), x])); }
 
 function clientRect(hwnd) {
   if (!hwnd) return null;
@@ -354,25 +240,12 @@ function clientRect(hwnd) {
   if (!user32.symbols.GetClientRect(hwnd, rect)) return null;
   const origin = new Int32Array(2);
   if (!user32.symbols.ClientToScreen(hwnd, origin)) return null;
-  return {
-    x: origin[0],
-    y: origin[1],
-    width: rect[2] - rect[0],
-    height: rect[3] - rect[1],
-  };
+  return { x: origin[0], y: origin[1], width: rect[2] - rect[0], height: rect[3] - rect[1] };
 }
 
-function isChildWindow(hwnd) {
-  return !!(user32.symbols.GetWindowLongW(hwnd, GWL_STYLE) & WS_CHILD);
-}
-
-function windowParent(hwnd) {
-  return isChildWindow(hwnd) ? user32.symbols.GetAncestor(hwnd, GA_PARENT) : null;
-}
-
-function windowOwner(hwnd) {
-  return isChildWindow(hwnd) ? null : user32.symbols.GetWindow(hwnd, GW_OWNER);
-}
+function isChildWindow(hwnd) { return !!(user32.symbols.GetWindowLongW(hwnd, GWL_STYLE) & WS_CHILD); }
+function windowParent(hwnd) { return isChildWindow(hwnd) ? user32.symbols.GetAncestor(hwnd, GA_PARENT) : null; }
+function windowOwner(hwnd) { return isChildWindow(hwnd) ? null : user32.symbols.GetWindow(hwnd, GW_OWNER); }
 
 function windowDepth(hwnd) {
   let depth = 0;
@@ -427,9 +300,7 @@ function getWindowInfo(hwnd, monitors = displayMap()) {
   };
 }
 
-function publicWindow({ _tid, ...window }) {
-  return window;
-}
+function publicWindow({ _tid, ...window }) { return window; }
 
 function regexMatch(value, pattern) {
   try {
@@ -446,23 +317,12 @@ function normalizeWindowFilter(filter) {
   return filter;
 }
 
-function own(object, key) {
-  return Object.prototype.hasOwnProperty.call(object, key);
-}
-
+function own(object, key) { return Object.prototype.hasOwnProperty.call(object, key); }
 function sameWindowId(actual, expected) {
-  if (actual == null || expected == null) return actual == null && expected == null;
-  return String(actual).toLowerCase() === String(expected).toLowerCase();
+  return actual == null || expected == null ? actual == null && expected == null : String(actual).toLowerCase() === String(expected).toLowerCase();
 }
-
-function anyFilter(value, match) {
-  const values = Array.isArray(value) ? value : [value];
-  return values.length > 0 && values.some(match);
-}
-
-function regexFilter(value, patterns) {
-  return anyFilter(patterns, (pattern) => regexMatch(value, pattern));
-}
+function anyFilter(value, match) { const values = Array.isArray(value) ? value : [value]; return values.length > 0 && values.some(match); }
+function regexFilter(value, patterns) { return anyFilter(patterns, (pattern) => regexMatch(value, pattern)); }
 
 function relationSpec(spec, defaultDomain) {
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) return null;
@@ -1706,14 +1566,22 @@ function comMethod(object, index, definition) {
   return new Deno.UnsafeFnPointer(fn, definition);
 }
 
+function comCall(object, index, result, parameters = [], args = []) {
+  return comMethod(object, index, { parameters: ["pointer", ...parameters], result }).call(object, ...args);
+}
+
+function comOut(object, index, Out = BigUint64Array, length = 1, args = [], parameters = args.map(() => "pointer")) {
+  const out = new Out(length);
+  const hr = comCall(object, index, "i32", [...parameters, "buffer"], [...args, out]);
+  return { hr, out };
+}
+
 function comRelease(object) {
-  if (!object) return;
-  comMethod(object, 2, { parameters: ["pointer"], result: "u32" }).call(object);
+  if (object) comCall(object, 2, "u32");
 }
 
 function comQuery(object, iid) {
-  const out = new BigUint64Array(1);
-  const hr = comMethod(object, 0, { parameters: ["pointer", "buffer", "buffer"], result: "i32" }).call(object, guid(iid), out);
+  const { hr, out } = comOut(object, 0, BigUint64Array, 1, [guid(iid)], ["buffer"]);
   checkHR(hr, "QueryInterface");
   return out[0] ? Deno.UnsafePointer.create(out[0]) : null;
 }
@@ -1751,111 +1619,58 @@ function ensureCom() {
 function ensureUia() {
   if (uiaAutomation && uiaWalker) return;
   ensureCom();
-
   const out = new BigUint64Array(1);
-  checkHR(
-    ole32.symbols.CoCreateInstance(
-      guid(CLSID_CUIAutomation),
-      null,
-      CLSCTX_INPROC_SERVER,
-      guid(IID_IUIAutomation),
-      out,
-    ),
-    "CoCreateInstance(CUIAutomation)",
-  );
+  checkHR(ole32.symbols.CoCreateInstance(guid(CLSID_CUIAutomation), null, CLSCTX_INPROC_SERVER, guid(IID_IUIAutomation), out), "CoCreateInstance(CUIAutomation)");
   uiaAutomation = out[0] ? Deno.UnsafePointer.create(out[0]) : null;
   if (!uiaAutomation) throw new Error("CUIAutomation returned no interface");
 
-  const walkerOut = new BigUint64Array(1);
-  const hr = comMethod(uiaAutomation, 14, {
-    parameters: ["pointer", "buffer"],
-    result: "i32",
-  }).call(uiaAutomation, walkerOut);
-  if (hr < 0 || !walkerOut[0]) {
+  const walker = comOut(uiaAutomation, 14);
+  if (walker.hr < 0 || !walker.out[0]) {
     comRelease(uiaAutomation);
     uiaAutomation = null;
-    checkHR(hr, "IUIAutomation.ControlViewWalker");
+    checkHR(walker.hr, "IUIAutomation.ControlViewWalker");
     throw new Error("UI Automation ControlViewWalker unavailable");
   }
-  uiaWalker = Deno.UnsafePointer.create(walkerOut[0]);
+  uiaWalker = Deno.UnsafePointer.create(walker.out[0]);
 }
 
 function uiaOutElement(object, index, args = []) {
-  const out = new BigUint64Array(1);
-  const parameters = ["pointer", ...args.map(() => "pointer"), "buffer"];
-  const hr = comMethod(object, index, { parameters, result: "i32" }).call(object, ...args, out);
+  const { hr, out } = comOut(object, index, BigUint64Array, 1, args);
   return hr >= 0 && out[0] ? Deno.UnsafePointer.create(out[0]) : null;
 }
 
-function uiaRootElement() {
-  ensureUia();
-  const out = new BigUint64Array(1);
-  const hr = comMethod(uiaAutomation, 5, { parameters: ["pointer", "buffer"], result: "i32" }).call(uiaAutomation, out);
-  return hr >= 0 && out[0] ? Deno.UnsafePointer.create(out[0]) : null;
-}
-
-function uiaElementFromHandle(hwnd) {
-  if (!hwnd) return null;
-  ensureUia();
-  const out = new BigUint64Array(1);
-  const hr = comMethod(uiaAutomation, 6, {
-    parameters: ["pointer", "pointer", "buffer"],
-    result: "i32",
-  }).call(uiaAutomation, hwnd, out);
-  return hr >= 0 && out[0] ? Deno.UnsafePointer.create(out[0]) : null;
-}
-
-function uiaParent(element) {
-  ensureUia();
-  return uiaOutElement(uiaWalker, 3, [element]);
-}
-
-function uiaFirstChild(element) {
-  ensureUia();
-  return uiaOutElement(uiaWalker, 4, [element]);
-}
-
-function uiaNextSibling(element) {
-  ensureUia();
-  return uiaOutElement(uiaWalker, 6, [element]);
-}
+function uiaRootElement() { ensureUia(); return uiaOutElement(uiaAutomation, 5); }
+function uiaElementFromHandle(hwnd) { if (!hwnd) return null; ensureUia(); return uiaOutElement(uiaAutomation, 6, [hwnd]); }
+function uiaParent(element) { ensureUia(); return uiaOutElement(uiaWalker, 3, [element]); }
+function uiaFirstChild(element) { ensureUia(); return uiaOutElement(uiaWalker, 4, [element]); }
+function uiaNextSibling(element) { ensureUia(); return uiaOutElement(uiaWalker, 6, [element]); }
 
 function uiaInt(element, index) {
-  const out = new Int32Array(1);
-  const hr = comMethod(element, index, { parameters: ["pointer", "buffer"], result: "i32" }).call(element, out);
+  const { hr, out } = comOut(element, index, Int32Array);
   return hr >= 0 ? out[0] : null;
 }
+function uiaBool(element, index) { const value = uiaInt(element, index); return value == null ? null : !!value; }
 
-function uiaBool(element, index) {
-  const value = uiaInt(element, index);
-  return value == null ? null : !!value;
+function bstrText(pointer) {
+  const length = pointer ? oleaut32.symbols.SysStringLen(pointer) : 0;
+  return length ? textDecoder16.decode(new Uint8Array(new Deno.UnsafePointerView(pointer).getArrayBuffer(length * 2))) : "";
 }
 
 function uiaBstr(element, index) {
-  const out = new BigUint64Array(1);
-  const hr = comMethod(element, index, { parameters: ["pointer", "buffer"], result: "i32" }).call(element, out);
+  const { hr, out } = comOut(element, index);
   if (hr < 0 || !out[0]) return "";
   const pointer = Deno.UnsafePointer.create(out[0]);
-  try {
-    const length = oleaut32.symbols.SysStringLen(pointer);
-    if (!length) return "";
-    return textDecoder16.decode(new Uint8Array(new Deno.UnsafePointerView(pointer).getArrayBuffer(length * 2)));
-  } finally {
-    oleaut32.symbols.SysFreeString(pointer);
-  }
+  try { return bstrText(pointer); } finally { oleaut32.symbols.SysFreeString(pointer); }
 }
 
 function uiaNativeWid(element) {
-  const out = new BigUint64Array(1);
-  const hr = comMethod(element, 36, { parameters: ["pointer", "buffer"], result: "i32" }).call(element, out);
+  const { hr, out } = comOut(element, 36);
   return hr >= 0 && out[0] ? `0x${out[0].toString(16)}` : null;
 }
 
 function uiaRect(element) {
-  const rect = new Int32Array(4);
-  const hr = comMethod(element, 43, { parameters: ["pointer", "buffer"], result: "i32" }).call(element, rect);
-  if (hr < 0) return null;
-  return { x: rect[0], y: rect[1], width: rect[2] - rect[0], height: rect[3] - rect[1] };
+  const { hr, out: rect } = comOut(element, 43, Int32Array, 4);
+  return hr < 0 ? null : { x: rect[0], y: rect[1], width: rect[2] - rect[0], height: rect[3] - rect[1] };
 }
 
 function uiaRuntimeId(element) {
@@ -1903,11 +1718,7 @@ function uiaVariant(element, propertyId) {
     if (type === 8) {
       const raw = view.getBigUint64(8, true);
       if (!raw) return "";
-      const pointer = Deno.UnsafePointer.create(raw);
-      const length = oleaut32.symbols.SysStringLen(pointer);
-      return length
-        ? textDecoder16.decode(new Uint8Array(new Deno.UnsafePointerView(pointer).getArrayBuffer(length * 2)))
-        : "";
+      return bstrText(Deno.UnsafePointer.create(raw));
     }
     return null;
   } finally {

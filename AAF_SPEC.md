@@ -648,6 +648,7 @@ format: webp           # only when save was used
 
 **Action input**
 
+- `provider` — `default | native | tesseract`; default is `default`. `native` requires the operating-system OCR backend, `tesseract` loads Tesseract.js on demand, and `default` uses native OCR with automatic Tesseract fallback on Linux when native OCR is unavailable.
 - `image` — optional retained image handle. When supplied, OCR uses that existing resource and does not recapture.
 - `window` — optional [window filter](#window-filters) selecting a fresh capture source when `image` is omitted.
 - `display` — optional [display](#displays) capture source/context when `image` is omitted.

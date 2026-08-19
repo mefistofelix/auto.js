@@ -15,7 +15,7 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 - keyboard press/down/up/type, repeated presses, active-layout character mapping, and human/random timing
 - `input_sel` focused/targeted text selection by range or regex, plus read/write and clipboard read/write/clear
 - screenshots with WebP default and PNG support, retained scenario image resources, screenshot reuse, and caller-owned final-state images
-- native OCR through Windows WinRT or macOS Vision
+- native OCR through Windows WinRT or macOS Vision, plus lazy Tesseract.js OCR when explicitly selected or used as the Linux fallback
 - polling waits for windows, OCR, images, and visual changes
 - explicit scenario `state`, references, interpolation, push/delete operations, and resource lifetime
 - session lock detection plus one-shot wake and scoped no-sleep/display-off requests

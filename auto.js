@@ -79,10 +79,42 @@ async function imageBGRA(image) {
   }
 }
 
-export async function ocr(options = {}) {
+async function nativeOcr(options) {
   if (!options.image) return backend.ocr(options);
   const image = await imageBGRA(options.image);
   return image ? backend.ocr({ ...options, image }) : null;
+}
+
+const TESSERACT_MODULE = "npm:" + "tesseract.js";
+
+async function tesseractOcr(options) {
+  const image = options.image
+    ? await imageBGRA(options.image)
+    : backend.captureScreenshot(options);
+  if (!image) return null;
+
+  let worker;
+  try {
+    const { createWorker } = await import(TESSERACT_MODULE);
+    worker = await createWorker();
+    const png = await sharpImage(image).png().toBuffer();
+    const { data } = await worker.recognize(png);
+    return { text: data.text, rect: image.rect };
+  } catch {
+    return null;
+  } finally {
+    await worker?.terminate();
+  }
+}
+
+export async function ocr(options = {}) {
+  const provider = String(options.provider ?? "default").toLowerCase();
+  if (provider === "native") return nativeOcr(options);
+  if (provider === "tesseract") return tesseractOcr(options);
+  if (provider !== "default") return null;
+
+  const result = await nativeOcr(options);
+  return result ?? (Deno.build.os === "linux" ? tesseractOcr(options) : null);
 }
 
 async function saveImage(image, path, format) {

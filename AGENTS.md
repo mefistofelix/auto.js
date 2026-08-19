@@ -267,7 +267,7 @@ COM and WinRT methods are invoked directly from their vtables with `Deno.UnsafeF
 
 On Darwin, use Vision directly through the Objective-C runtime: create a `VNRecognizeTextRequest`, process a `CGImage` synchronously with `VNImageRequestHandler`, and read each observation's first `topCandidates(1)` string. Keep Vision's default accurate recognition level. Fresh screenshots should stay as `CGImage` for OCR instead of round-tripping through an encoded format; caller-returned encoded image resources are decoded to the common BGRA8 representation at the shared codec boundary first.
 
-Do not replace native OCR with Tesseract or a subprocess.
+Do not replace native OCR with Tesseract or a subprocess. OCR provider selection belongs to `auto.js`: `native` delegates to the selected backend, `tesseract` lazily imports `npm:tesseract.js`, and `default` uses native OCR with automatic Tesseract fallback on Linux when native OCR is unavailable. Keep Tesseract out of native backend files. Import it lazily only when selected. Keep direct OCR calls stateless: create and terminate the Tesseract worker within the call so the library does not keep the Deno process alive through hidden worker lifetime.
 
 ## Input
 

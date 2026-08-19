@@ -8,7 +8,7 @@ function dll(name, text) {
   for (const spec of text.split(/[;\n]/).map((x) => x.trim()).filter(Boolean)) { const [symbol, result, ...parameters] = spec.split(/\s+/); symbols[symbol] = { parameters, result }; }
   return Deno.dlopen(name, symbols);
 }
-const user32 = dll("user32.dll", `EnumWindows i32 pointer pointer; EnumChildWindows i32 pointer pointer pointer; EnumDisplayMonitors i32 pointer pointer pointer pointer; GetMonitorInfoW i32 pointer buffer; GetWindowTextLengthW i32 pointer; GetWindowTextW i32 pointer buffer i32; GetClassNameW i32 pointer buffer i32; GetWindowThreadProcessId u32 pointer buffer; GetKeyboardLayout pointer u32; VkKeyScanExW i16 u16 pointer; MapVirtualKeyExW u32 u32 u32 pointer; GetWindowRect i32 pointer buffer; GetWindowLongW i32 pointer i32; SetWindowLongW i32 pointer i32 i32; GetWindow pointer pointer u32; GetClientRect i32 pointer buffer; ClientToScreen i32 pointer buffer; IsWindowVisible i32 pointer; IsWindowEnabled i32 pointer; IsIconic i32 pointer; IsZoomed i32 pointer; MonitorFromWindow pointer pointer u32; ShowWindow i32 pointer i32; SetWindowPos i32 pointer pointer i32 i32 i32 i32 u32; SetForegroundWindow i32 pointer; BringWindowToTop i32 pointer; SetFocus pointer pointer; GetForegroundWindow pointer; AttachThreadInput i32 u32 u32 i32; PostMessageW i32 pointer u32 usize isize; SendMessageTimeoutW isize pointer u32 usize pointer u32 u32 buffer; EnableWindow i32 pointer i32; SetLayeredWindowAttributes i32 pointer u32 u8 u32; GetDC pointer pointer; ReleaseDC i32 pointer pointer; RegisterClassExW u16 buffer; CreateWindowExW pointer u32 buffer buffer u32 i32 i32 i32 i32 pointer pointer pointer pointer; DefWindowProcW isize pointer u32 usize isize; DestroyWindow i32 pointer; UpdateWindow i32 pointer; FillRect i32 pointer buffer pointer; PrintWindow i32 pointer pointer u32; SetCursorPos i32 i32 i32; GetCursorPos i32 buffer; SendInput u32 u32 buffer i32; WindowFromPoint pointer u64; GetAncestor pointer pointer u32; SetProcessDPIAware i32; OpenClipboard i32 pointer; CloseClipboard i32; EmptyClipboard i32; GetClipboardData pointer u32; SetClipboardData pointer u32 pointer; IsClipboardFormatAvailable i32 u32`);
+const user32 = dll("user32.dll", `EnumWindows i32 pointer pointer; EnumChildWindows i32 pointer pointer pointer; EnumDisplayMonitors i32 pointer pointer pointer pointer; GetMonitorInfoW i32 pointer buffer; GetWindowTextLengthW i32 pointer; GetWindowTextW i32 pointer buffer i32; GetClassNameW i32 pointer buffer i32; GetWindowThreadProcessId u32 pointer buffer; GetKeyboardLayout pointer u32; VkKeyScanExW i16 u16 pointer; MapVirtualKeyExW u32 u32 u32 pointer; GetWindowRect i32 pointer buffer; GetWindowLongW i32 pointer i32; SetWindowLongW i32 pointer i32 i32; GetWindow pointer pointer u32; GetClientRect i32 pointer buffer; ClientToScreen i32 pointer buffer; IsWindowVisible i32 pointer; IsWindowEnabled i32 pointer; IsIconic i32 pointer; IsZoomed i32 pointer; MonitorFromWindow pointer pointer u32; ShowWindow i32 pointer i32; SetWindowPos i32 pointer pointer i32 i32 i32 i32 u32; SetForegroundWindow i32 pointer; BringWindowToTop i32 pointer; SetFocus pointer pointer; GetForegroundWindow pointer; GetGUIThreadInfo i32 u32 buffer; AttachThreadInput i32 u32 u32 i32; PostMessageW i32 pointer u32 usize isize; SendMessageTimeoutW isize pointer u32 usize pointer u32 u32 buffer; EnableWindow i32 pointer i32; SetLayeredWindowAttributes i32 pointer u32 u8 u32; GetDC pointer pointer; ReleaseDC i32 pointer pointer; RegisterClassExW u16 buffer; CreateWindowExW pointer u32 buffer buffer u32 i32 i32 i32 i32 pointer pointer pointer pointer; DefWindowProcW isize pointer u32 usize isize; DestroyWindow i32 pointer; UpdateWindow i32 pointer; FillRect i32 pointer buffer pointer; PrintWindow i32 pointer pointer u32; SetCursorPos i32 i32 i32; GetCursorPos i32 buffer; SendInput u32 u32 buffer i32; WindowFromPoint pointer u64; GetAncestor pointer pointer u32; SetProcessDPIAware i32; OpenClipboard i32 pointer; CloseClipboard i32; EmptyClipboard i32; GetClipboardData pointer u32; SetClipboardData pointer u32 pointer; IsClipboardFormatAvailable i32 u32`);
 const kernel32 = dll("kernel32.dll", `OpenProcess pointer u32 i32 u32; QueryFullProcessImageNameW i32 pointer u32 buffer buffer; CloseHandle i32 pointer; GetCurrentThreadId u32; GlobalAlloc pointer u32 usize; GlobalLock pointer pointer; GlobalUnlock i32 pointer; GlobalFree pointer pointer; GetModuleHandleW pointer pointer; SetThreadExecutionState u32 u32`);
 const gdi32 = dll("gdi32.dll", `CreateCompatibleDC pointer pointer; DeleteDC i32 pointer; CreateDIBSection pointer pointer buffer u32 buffer pointer u32; SelectObject pointer pointer pointer; DeleteObject i32 pointer; CreateSolidBrush pointer u32; BitBlt i32 pointer i32 i32 i32 i32 pointer i32 i32 u32`);
 const ntdll = dll("ntdll.dll", `RtlMoveMemory void pointer buffer usize`);
@@ -19,7 +19,7 @@ const combase = dll("combase.dll", `RoInitialize i32 u32; RoGetActivationFactory
 const shcore = dll("shcore.dll", `GetScaleFactorForMonitor i32 pointer buffer`);
 try { user32.symbols.SetProcessDPIAware(); } catch { /* already configured is fine */ }
 const textDecoder16 = new TextDecoder("utf-16le"), POINTER_SIZE = 8, CF_UNICODETEXT = 13, PROCESS_QUERY_LIMITED_INFORMATION = 0x1000, MONITOR_DEFAULTTONEAREST = 2, SRCCOPY = 0x00cc0020, PW_RENDERFULLCONTENT = 2;
-const WM_CLOSE = 0x10, WM_SETTEXT = 0x0c, WM_GETTEXT = 0x0d, WM_GETTEXTLENGTH = 0x0e, EM_GETSEL = 0xb0, EM_SETSEL = 0xb1, EM_REPLACESEL = 0xc2, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205, WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208, WM_MOUSEWHEEL = 0x20a, WM_MOUSEHWHEEL = 0x20e;
+const WM_CLOSE = 0x10, WM_SETTEXT = 0x0c, WM_GETTEXT = 0x0d, WM_GETTEXTLENGTH = 0x0e, EM_GETSEL = 0xb0, EM_REPLACESEL = 0xc2, WM_LBUTTONDOWN = 0x201, WM_LBUTTONUP = 0x202, WM_RBUTTONDOWN = 0x204, WM_RBUTTONUP = 0x205, WM_MBUTTONDOWN = 0x207, WM_MBUTTONUP = 0x208, WM_MOUSEWHEEL = 0x20a, WM_MOUSEHWHEEL = 0x20e;
 const GA_PARENT = 1, GA_ROOT = 2, GW_HWNDPREV = 3, GW_OWNER = 4, GWL_STYLE = -16, GWL_EXSTYLE = -20, WS_CHILD = 0x40000000, WS_BORDER = 0x00800000, WS_DLGFRAME = 0x00400000, WS_CAPTION = WS_BORDER | WS_DLGFRAME;
 const WS_THICKFRAME = 0x00040000, WS_SYSMENU = 0x00080000, WS_MINIMIZEBOX = 0x00020000, WS_MAXIMIZEBOX = 0x00010000, WS_EX_LAYERED = 0x00080000, LWA_ALPHA = 2, FRAME_STYLE_MASK = WS_BORDER | WS_DLGFRAME | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 const SWP_NOSIZE = 1, SWP_NOMOVE = 2, SWP_NOZORDER = 4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20, INPUT_MOUSE = 0, INPUT_KEYBOARD = 1, KEYEVENTF_EXTENDEDKEY = 1, KEYEVENTF_KEYUP = 2, KEYEVENTF_UNICODE = 4, MOUSEEVENTF_WHEEL = 0x0800, MOUSEEVENTF_HWHEEL = 0x1000, WHEEL_DELTA = 120;
@@ -228,20 +228,21 @@ function windowSelection(hwnd, text = windowMessageText(hwnd)) {
   if (!user32.symbols.SendMessageTimeoutW(hwnd, EM_GETSEL, ptrValue(startPtr), Deno.UnsafePointer.of(end), 3, 250, out)) return null;
   const a = start[0], b = end[0]; return { start: a, end: b, text: text == null ? null : text.slice(Math.min(a,b), Math.max(a,b)) };
 }
-function setWindowSelection(hwnd, selection) {
-  if (!textControl(hwnd) || !selection || typeof selection !== "object" || Array.isArray(selection)) return null;
-  let current = windowSelection(hwnd); if (!current) return null;
-  if (own(selection,"start") || own(selection,"end")) {
-    const start = Number(selection.start ?? current.start), end = Number(selection.end ?? start);
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end < 0) return null;
-    if (sendMessage(hwnd, EM_SETSEL, BigInt(start), end ? asPointer(end) : null) == null) return null;
-  }
-  if (own(selection,"text")) { const text = wide(String(selection.text ?? ""), true); if (sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(text)) == null) return null; }
-  return windowSelection(hwnd);
+function focusedControl() {
+  const active = user32.symbols.GetForegroundWindow(); if (!active) return null;
+  const tid = user32.symbols.GetWindowThreadProcessId(active, new Uint32Array(1)), info = new Uint8Array(72), view = new DataView(info.buffer); view.setUint32(0, info.byteLength, true);
+  if (!user32.symbols.GetGUIThreadInfo(tid, info)) return null; const value = view.getBigUint64(16, true); return value ? asPointer(value) : null;
 }
-export function window_get({ window = {}, text = false, selection = false } = {}) {
-  const found = windowRecords(window)[0]; if (!found) return null; const out = publicWindow(found), hwnd = asPointer(found.wid), live = text || selection ? windowMessageText(hwnd) : null;
-  if (text) out.text = live; if (selection) out.selection = windowSelection(hwnd, live); return out;
+function selectionTarget(window) { if (window == null) return focusedControl(); const found = windowRecords(window)[0]; return found ? asPointer(found.wid) : null; }
+export function selection(options = {}) {
+  if (!options || typeof options !== "object" || Array.isArray(options)) return null;
+  const operations = ["read", "write"].filter((key) => own(options, key)); if (operations.length !== 1) throw new Error("selection requires exactly one of read, write");
+  const hwnd = selectionTarget(options.window); if (!hwnd || !textControl(hwnd)) return null;
+  if (operations[0] === "read") return options.read === true ? windowSelection(hwnd)?.text ?? null : null;
+  const text = String(options.write ?? ""), data = wide(text, true); return sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(data)) == null ? null : { length: text.length };
+}
+export function window_get({ window = {}, text = false } = {}) {
+  const found = windowRecords(window)[0]; if (!found) return null; const out = publicWindow(found); if (text) out.text = windowMessageText(asPointer(found.wid)); return out;
 }
 export function window_wait({ window = {}, timeout = 5000, interval = 50 } = {}) { return wait({ window,timeout,interval }); }
 function sessionLocked() {
@@ -294,11 +295,11 @@ function setWindowOpacity(hwnd, opacity) {
   const ex = user32.symbols.GetWindowLongW(hwnd, GWL_EXSTYLE) >>> 0; if (!(ex & WS_EX_LAYERED)) user32.symbols.SetWindowLongW(hwnd, GWL_EXSTYLE, (ex | WS_EX_LAYERED) | 0);
   return !!user32.symbols.SetLayeredWindowAttributes(hwnd, 0, Math.round(opacity * 255), LWA_ALPHA);
 }
-export async function window_set({ window = {}, title, frame, topmost, opacity, enabled, selection, highlight: mark } = {}) {
+export async function window_set({ window = {}, title, frame, topmost, opacity, enabled, highlight: mark } = {}) {
   const info = windowRecords(window)[0]; if (!info) return null; const hwnd = asPointer(info.wid);
   if (title != null) setWindowTitle(hwnd, title); if (frame != null) setWindowFrame(hwnd, frame); if (topmost != null) setWindowTopmost(hwnd, !!topmost);
-  if (opacity != null) setWindowOpacity(hwnd, opacity); if (enabled != null) user32.symbols.EnableWindow(hwnd, enabled ? 1 : 0); if (selection != null) setWindowSelection(hwnd, selection);
-  if (mark) await highlight({ window: { wid: info.wid }, duration: mark === true ? 800 : mark }); return window_get({ window: { wid: info.wid }, selection: selection != null });
+  if (opacity != null) setWindowOpacity(hwnd, opacity); if (enabled != null) user32.symbols.EnableWindow(hwnd, enabled ? 1 : 0);
+  if (mark) await highlight({ window: { wid: info.wid }, duration: mark === true ? 800 : mark }); return window_get({ window: { wid: info.wid } });
 }
 export function window_hit({ pos, display, child = false } = {}) {
   const point = mouseTarget(null, display, pos)?.to;
@@ -501,25 +502,21 @@ function mouseTarget(info, display, pos, defaultAt) {
   const relative = rect ? geometryAnchor(geometry, target?.at, rect) : from;
   return { from, to: resolvePos(target, relative, geometry, target?.at == null ? from : relative) };
 }
-function humanMouse(from, to) {
+function userMousePath(from, to) {
   const dx = to.x - from.x, dy = to.y - from.y, distance = Math.hypot(dx,dy), length = distance || 1, nx = -dy / length, ny = dx / length;
   const bend = (Math.random() - .5) * Math.min(140, distance * .35), c1 = { x: from.x + dx * .3 + nx * bend, y: from.y + dy * .3 + ny * bend }, c2 = { x: from.x + dx * .72 - nx * bend * .35, y: from.y + dy * .72 - ny * bend * .35 };
-  const duration = Math.max(120, Math.min(900, 80 + Math.sqrt(distance) * 22)) * (.8 + Math.random() * .4);
-  return { duration, point(t) {
-    if (t >= 1) return to;
-    const u = 1 - t, jitter = Math.min(2.5, distance / 120) * u;
-    return { x: u*u*u*from.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*to.x + (Math.random()-.5)*2*jitter, y: u*u*u*from.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*to.y + (Math.random()-.5)*2*jitter };
-  } };
+  return (t) => { if (t >= 1) return to; const u = 1 - t, jitter = Math.min(2.5, distance / 120) * u; return { x: u*u*u*from.x + 3*u*u*t*c1.x + 3*u*t*t*c2.x + t*t*t*to.x + (Math.random()-.5)*2*jitter, y: u*u*u*from.y + 3*u*u*t*c1.y + 3*u*t*t*c2.y + t*t*t*to.y + (Math.random()-.5)*2*jitter }; };
 }
+function userMouseDuration(from, to) { const distance = Math.hypot(to.x-from.x, to.y-from.y); return Math.max(120, Math.min(900, 80 + Math.sqrt(distance) * 22)) * (.8 + Math.random() * .4); }
 export async function mouse_move(options = {}) {
-  const { pos, display, duration: durationSpec = 0, steps: requestedSteps, window } = options, info = window == null ? null : windowRecords(window)[0], target = mouseTarget(info, display, pos);
+  const { pos, display, duration: durationSpec = 0, path, steps: requestedSteps, window } = options, info = window == null ? null : windowRecords(window)[0], target = mouseTarget(info, display, pos);
   if (!target) return null;
   if (window != null && !info) return { pos: target.from };
-  const { from, to } = target, human = userTime(durationSpec) ? humanMouse(from,to) : null, duration = human?.duration ?? timeMs(durationSpec, 0, options);
+  const { from, to } = target, route = userTime(path) ? userMousePath(from,to) : null, duration = userTime(durationSpec) ? userMouseDuration(from,to) : timeMs(durationSpec, 0, options);
   if (duration <= 0) return { pos: user32.symbols.SetCursorPos(to.x, to.y) ? to : from };
   const steps = requestedSteps ?? Math.max(2, Math.round(duration / 16));
   for (let i = 1; i <= steps; i++) {
-    const t = i / steps, point = human ? human.point(t) : { x: from.x + (to.x-from.x)*t, y: from.y + (to.y-from.y)*t };
+    const t = i / steps, point = route ? route(t) : { x: from.x + (to.x-from.x)*t, y: from.y + (to.y-from.y)*t };
     user32.symbols.SetCursorPos(Math.round(point.x), Math.round(point.y)); if (i < steps) await delay(duration / steps);
   }
   return { pos: to };
@@ -540,7 +537,7 @@ function postMouseWheel(hwnd, amount, point, horizontal = false) {
   const wParam = BigInt(((Math.round(amount * WHEEL_DELTA) & 0xffff) << 16) >>> 0), message = horizontal ? WM_MOUSEHWHEEL : WM_MOUSEWHEEL;
   if (!user32.symbols.PostMessageW(hwnd, message, wParam, packMousePoint(point))) throw new Error(`PostMessage(mouse ${horizontal ? "horizontal " : ""}wheel) failed`);
 }
-const heldMouse = new Set();
+const heldMouse = new Map();
 export function mouse_button(options = {}) {
   const { click, down, up, wheel, hwheel, window, display, pos, repeat = 1, interval = 0 } = options, actions = Object.entries({ click, down, up, wheel, hwheel }).filter(([, value]) => value != null);
   if (actions.length !== 1) throw new Error("mouse_button requires exactly one of click, down, up, wheel, hwheel");
@@ -559,9 +556,9 @@ export function mouse_button(options = {}) {
   }
   const button = String(value).toLowerCase(), spec = mouseButtons[button];
   if (!spec) throw new Error(`Unknown mouse button: ${value}`);
-  const send = (down) => direct ? postMouseButton(asPointer(info.wid), spec, down, point) : mouseInput(spec.input[down ? 0 : 1]);
+  const send = (down) => direct ? postMouseButton(asPointer(info.wid), spec, down, point) : mouseInput(spec.input[down ? 0 : 1]), hold = `${direct ? info.wid.toLowerCase() : "physical"}:${button}`;
   if (action === "click") for (let i = 0; i < repeat; i++) { send(true); send(false); const pause = timeMs(interval, 0, options); if (pause && i + 1 < repeat) sleepSync(pause); }
-  else { const isDown = action === "down"; send(isDown); if (!direct) isDown ? heldMouse.add(button) : heldMouse.delete(button); }
+  else { const isDown = action === "down"; send(isDown); if (isDown) heldMouse.set(hold, { direct, wid: info?.wid, button, point }); else heldMouse.delete(hold); }
   return { [action]: button, ...(repeat !== 1 && { repeat }), ...(direct && { wid: info.wid }), pos: point };
 }
 const VK = Object.fromEntries([
@@ -643,11 +640,11 @@ function typeUnits(text) {
 }
 function userKeyDelay(char) { return userInterval() + (/[.,!?;:]$/.test(char) ? 60 + Math.random()*180 : /\s/.test(char) ? Math.random()*40 : 0); }
 async function typeText(text, interval, duration, action) {
-  const units = typeUnits(text), human = userTime(duration) || userTime(interval), total = duration != null && !userTime(duration) ? timeMs(duration,0,action) : null, fixed = total != null && units.length > 1 ? total / (units.length - 1) : 0;
+  const units = typeUnits(text), hasDuration = duration != null, human = hasDuration ? userTime(duration) : userTime(interval), total = hasDuration && !human ? timeMs(duration,0,action) : null, fixed = total != null && units.length > 1 ? total / (units.length - 1) : 0;
   let typed = 0;
   for (let i = 0; i < units.length; i++) {
     const unit = units[i], ok = unit.enter ? (await pressKeys("enter")).length : typeCodeUnit(unit.code); if (ok) typed++;
-    if (i + 1 < units.length) { const pause = human ? userKeyDelay(unit.char) : total != null ? fixed : timeMs(interval,0,action); if (pause > 0) await delay(pause); }
+    if (i + 1 < units.length) { const pause = human ? userKeyDelay(unit.char) : hasDuration ? fixed : timeMs(interval,0,action); if (pause > 0) await delay(pause); }
   }
   return typed;
 }
@@ -655,8 +652,6 @@ export async function keyb(options = {}) {
   const { press, down, up, type, repeat = 1, interval = 0, duration } = options;
   if (!Number.isInteger(repeat) || repeat < 1) throw new Error(`Invalid repeat: ${repeat}`);
   if (repeat !== 1 && press == null) throw new Error("keyb repeat is only valid with press");
-  if (duration != null && type == null) throw new Error("keyb duration is only valid with type");
-  if (duration != null && own(options,"interval")) throw new Error("keyb type accepts either duration or interval");
   const result = {};
   if (press != null) {
     for (let i = 0; i < repeat; i++) { result.press = await pressKeys(press); const pause = timeMs(interval,0,options); if (pause > 0 && i + 1 < repeat) await delay(pause); }
@@ -667,12 +662,14 @@ export async function keyb(options = {}) {
   if (type != null) result.typed = await typeText(String(type), interval, duration, options);
   return result;
 }
-export function input_reset() {
+function inputState() { return { keys: new Set(heldKeys.keys()), mouse: new Set(heldMouse.keys()) }; }
+function releaseInput(keep = { keys: new Set(), mouse: new Set() }) {
   let released = 0;
-  for (const [vk, layout] of [...heldKeys]) { try { sendVirtualKey(vk, false, layout); released++; } catch {} heldKeys.delete(vk); }
-  for (const button of [...heldMouse]) { try { mouseInput(mouseButtons[button].input[1]); released++; } catch {} heldMouse.delete(button); }
+  for (const [vk, layout] of [...heldKeys]) if (!keep.keys.has(vk)) { try { sendVirtualKey(vk, false, layout); released++; } catch {} heldKeys.delete(vk); }
+  for (const [key, hold] of [...heldMouse]) if (!keep.mouse.has(key)) { try { const spec = mouseButtons[hold.button]; hold.direct ? postMouseButton(asPointer(hold.wid), spec, false, hold.point) : mouseInput(spec.input[1]); released++; } catch {} heldMouse.delete(key); }
   return { released };
 }
+export function input_reset() { return releaseInput(); }
 function openClipboard() {
   for (let i = 0; i < 20; i++) { if (user32.symbols.OpenClipboard(null)) return; sleepSync(5); }
   throw new Error("OpenClipboard failed");
@@ -999,7 +996,7 @@ function resolveActionResources(name, value, resources) {
   if (name !== "ocr" || !value || typeof value !== "object" || typeof value.image !== "string") return value;
   const image = imageResource(resources, value.image); if (!image) scenarioFail("image resource unavailable", { image: value.image }); return { ...value, image };
 }
-const ACTIONS = { wait, window_control, window_set, mouse_move, mouse_button, keyb, input_reset, clipboard, ocr, window_find, window_get, a11y_find, a11y_action, display_find, system, window_hit, highlight };
+const ACTIONS = { wait, window_control, window_set, mouse_move, mouse_button, keyb, input_reset, selection, clipboard, ocr, window_find, window_get, a11y_find, a11y_action, display_find, system, window_hit, highlight };
 const SCENARIO_PATH = /^\$\.(prev|state)((?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*)$/, STATE_PATH = /^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/;
 function scenarioPath(path) {
   const match = typeof path === "string" && path.match(SCENARIO_PATH);
@@ -1071,7 +1068,7 @@ function applyStateOps(root, ops) {
 }
 export async function run(actions = []) {
   if (!Array.isArray(actions)) return [{ error: "invalid scenario", message: "actions must be an array" }];
-  const results = [], context = { prev: null, state: Object.create(null) }, resources = new Map();
+  const results = [], context = { prev: null, state: Object.create(null) }, resources = new Map(), input = inputState();
   try {
     for (const action of actions) {
       let name, result, stateStep = false;
@@ -1098,5 +1095,5 @@ export async function run(actions = []) {
       collectScenarioResources(resources, context);
     }
     return results;
-  } finally { resources.clear(); }
+  } finally { releaseInput(input); resources.clear(); }
 }

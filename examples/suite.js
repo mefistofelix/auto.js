@@ -23,6 +23,7 @@ function fixture(token) {
     SetWindowTextW: { parameters: ["pointer", "buffer"], result: "i32" },
     SetForegroundWindow: { parameters: ["pointer"], result: "i32" },
     SetFocus: { parameters: ["pointer"], result: "pointer" },
+    SendMessageW: { parameters: ["pointer", "u32", "usize", "isize"], result: "isize" },
     GetMessageW: { parameters: ["buffer", "pointer", "u32", "u32"], result: "i32" },
     TranslateMessage: { parameters: ["buffer"], result: "i32" },
     DispatchMessageW: { parameters: ["buffer"], result: "isize" },
@@ -110,6 +111,7 @@ function fixture(token) {
   );
   create("STATIC", OCR_TEXT, WS_CHILD | WS_VISIBLE, 28, 28, 360, 36, root);
   edit = create("EDIT", EDIT_INITIAL, WS_CHILD | WS_VISIBLE | WS_BORDER | WS_TABSTOP | ES_AUTOHSCROLL, 28, 86, 410, 34, root, 1002);
+  user32.symbols.SendMessageW(edit, 0xb1, 0n, 4n);
   create("BUTTON", BUTTON_TEXT, WS_CHILD | WS_VISIBLE | WS_TABSTOP, 462, 86, 150, 34, root, BUTTON_ID);
   status = create("STATIC", `${STATUS_PREFIX} 0`, WS_CHILD | WS_VISIBLE, 28, 148, 280, 36, root);
   const panel = create("STATIC", "PANEL", WS_CHILD | WS_VISIBLE | WS_BORDER, 28, 210, 330, 105, root);
@@ -152,6 +154,7 @@ const {
   mouse_button,
   keyb,
   input_reset,
+  selection,
   clipboard,
   ocr,
   wait,
@@ -248,13 +251,8 @@ try {
   same(window_get({ window: { wid: editWindow.wid }, text: true })?.text, EDIT_INITIAL, "window_get edit text failed");
   same(window_get({ window: { wid: statusWindow.wid }, text: true })?.text, `${STATUS_PREFIX} 0`, "window_get label text failed");
   same((await run([{ window_get: { window: { wid: editWindow.wid }, text: true } }]))[0]?.text, EDIT_INITIAL, "scenario window_get text failed");
-  await window_set({ window: { wid: editWindow.wid }, selection: { start: 0, end: 4 } });
-  same(window_get({ window: { wid: editWindow.wid }, selection: true })?.selection?.text, "EDIT", "window_get selection failed");
-  await window_set({ window: { wid: editWindow.wid }, selection: { text: "TEST" } });
-  same(window_get({ window: { wid: editWindow.wid }, text: true })?.text, "TEST READY", "window_set selection replacement failed");
-  const restoredSelection = (await run([{ window_set: { window: { wid: editWindow.wid }, selection: { start: 0, end: 4, text: "EDIT" } } }]))[0];
-  same(restoredSelection?.selection?.text, "", "scenario selection replacement should leave a caret");
-  same(window_get({ window: { wid: editWindow.wid }, text: true })?.text, EDIT_INITIAL, "selection test did not restore fixture text");
+  same(selection({ window: { wid: editWindow.wid }, read: true }), "EDIT", "selection read failed");
+  same((await run([{ selection: { window: { wid: editWindow.wid }, read: true } }]))[0], "EDIT", "scenario selection read failed");
   assert(nestedWindow.depth >= 2, "nested native depth was not preserved");
   same(
     window_find({ window: { wid: root.wid, down: { class: "^Button$", depth: "all" } }, limit: 1 })[0]?.wid,
@@ -303,6 +301,13 @@ try {
     "window -> a11y bridge failed",
   );
   check("a11y filters, capabilities, actions, limit, cross-domain relations");
+
+  same(selection({ window: { wid: editWindow.wid }, write: "Z" })?.length, 1, "selection write failed");
+  const selectionWritten = window_get({ window: { wid: editWindow.wid }, text: true })?.text;
+  assert(selectionWritten?.includes("Z") && selectionWritten !== EDIT_INITIAL, "selection write did not replace/insert at the current selection");
+  a11y_action({ a11y: { wid: editWindow.wid }, action: "set", value: EDIT_INITIAL });
+  await eventually(() => window_get({ window: { wid: editWindow.wid }, text: true })?.text === EDIT_INITIAL, "selection test did not restore edit text");
+  check("text selection read/write");
 
   assert(await window_wait({ window: { wid: root.wid }, timeout: 500, interval: 20 }), "window_wait failed");
   assert(await wait({ window: { wid: root.wid }, timeout: 0 }), "wait.window immediate match failed");
@@ -384,9 +389,10 @@ try {
   }
   const clientPoint = await mouse_move({ window: { wid: root.wid }, pos: { at: "centerWC", x: "+10", y: "-10" } });
   assert(clientPoint?.pos, "mouse_move WC geometry failed");
-  const humanPoint = await mouse_move({ pos: clientPoint.pos, duration: "user()" });
-  same(humanPoint?.pos.x, clientPoint.pos.x, "human mouse x destination failed");
-  same(humanPoint?.pos.y, clientPoint.pos.y, "human mouse y destination failed");
+  const humanTarget = { x: clientPoint.pos.x + 12, y: clientPoint.pos.y + 8 };
+  const humanPoint = await mouse_move({ pos: humanTarget, duration: 40, path: "user()" });
+  same(humanPoint?.pos.x, humanTarget.x, "user mouse path x destination failed");
+  same(humanPoint?.pos.y, humanTarget.y, "user mouse path y destination failed");
   let clicks = 0;
   same(a11y_action({ a11y: { wid: buttonWindow.wid }, action: "invoke" })?.action, "invoke", "a11y invoke action failed");
   clicks++;
@@ -427,7 +433,9 @@ try {
   same(wheel?.wheel, 1, "direct-target mouse wheel failed");
   const hwheel = mouse_button({ window: { wid: root.wid }, hwheel: 1 });
   same(hwheel?.hwheel, 1, "direct-target horizontal mouse wheel failed");
-  check("mouse_button direct click/wheel/hwheel");
+  same((await run([{ mouse_button: { window: { wid: nestedWindow.wpid }, down: "left" } }]))[0]?.down, "left", "scenario mouse hold failed");
+  same(input_reset().released, 0, "run did not implicitly reset direct mouse hold");
+  check("mouse_button direct click/wheel/hwheel + run reset");
 
   root = window_get({ window: { wid: root.wid } });
   if (interactiveDesktop && root?.foreground) {
@@ -463,6 +471,10 @@ try {
     same(timed[1]?.typed, 2, "$action timing expression failed after scenario normalization");
     await eventually(() => editValue() === `${finalText}XY`, "timed scenario typing did not reach fixture edit");
     await keyb({ press: "backspace", repeat: 2 });
+    const priorityStart = performance.now(), priority = await keyb({ type: "ZZ", duration: 0, interval: 1000 });
+    same(priority.typed, 2, "keyb duration/interval priority typing failed");
+    assert(performance.now() - priorityStart < 500, "keyb interval was not ignored when duration was supplied");
+    await keyb({ press: "backspace", repeat: 2 });
     const humanTyped = await keyb({ type: "UV", duration: "user()" });
     same(humanTyped.typed, 2, "user typing duration failed");
     await keyb({ press: "backspace", repeat: 2 });
@@ -475,6 +487,8 @@ try {
     same(held.down[0], "ctrl", "keyb held input for reset failed");
     assert(input_reset().released >= 1, "input_reset did not release held keyboard input");
     same((await run([{ input_reset: {} }]))[0]?.released, 0, "scenario input_reset failed");
+    same((await run([{ keyb: { down: "shift" } }]))[0]?.down?.[0], "shift", "scenario held key failed");
+    same(input_reset().released, 0, "run did not implicitly reset held keyboard input");
     await eventually(() => editValue() === finalText, "final keyboard text did not remain in fixture edit");
     check("keyb press/type/down/up/repeat/layout mapping/timing + input_reset");
   } else {

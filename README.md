@@ -8,12 +8,12 @@ AutoJS exposes both direct JavaScript functions and **AAF — Automation Action 
 
 ## Features
 
-- native window discovery, filtering, tree relations, geometry, control, mutation, hit testing, live text, and text selection helpers
+- native window discovery, filtering, tree relations, geometry, control, mutation, hit testing, and live text
 - Windows UI Automation accessibility discovery/actions and window/accessibility cross-relations
 - display discovery and W / WC / D coordinate references
-- physical and direct-target mouse input, including human-like movement timing
+- physical and direct-target mouse input, including independent human-like movement path/timing and owned-input recovery
 - keyboard press/down/up/type, repeated presses, active-layout character mapping, and human/random timing
-- clipboard read/write/clear
+- focused/targeted text-selection read/write plus clipboard read/write/clear
 - screenshots with WebP default and PNG support, retained scenario image resources, and screenshot reuse
 - Windows-native OCR through WinRT
 - polling waits for windows, OCR, images, and visual changes
@@ -86,7 +86,7 @@ See [`AAF_SPEC.md`](AAF_SPEC.md) for the complete AAF specification.
 
 `examples/suite.js` is the primary regression suite. It creates its own private Win32 fixture process and controls that fixture instead of relying on pre-existing desktop state.
 
-It verifies windows, accessibility/actions, relations, limits, geometry, mouse, keyboard, `rand($action...)` / `user()` timing, clipboard, native text selection, WebP/PNG screenshots, OCR, waits, scenario state/resources, system/session helpers, and cross-process window text reads.
+It verifies windows, accessibility/actions, relations, limits, geometry, mouse, keyboard, `rand($action...)` / `user()` timing, input recovery, clipboard, text selection, WebP/PNG screenshots, OCR, waits, scenario state/resources, system/session helpers, and cross-process window text reads.
 
 ```text
 deno run -A examples/suite.js

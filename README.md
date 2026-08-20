@@ -97,7 +97,7 @@ From npm, Deno can import AutoJS directly without creating a local
 `node_modules` directory:
 
 ```js
-import { keyb, window_control, window_find } from "npm:auto.js";
+import { keyb, window_control, window_find } from "npm:@mefistofelix/auto.js";
 
 const win = window_find({
   window: { bin: "notepad\\.exe$" },

@@ -1,5 +1,5 @@
 {
-  "name": "auto.js",
+  "name": "@mefistofelix/auto.js",
   "version": "0.1.0",
   "description": "Minimal desktop automation for Deno using native operating-system APIs and AAF scenarios.",
   "type": "module",
@@ -23,7 +23,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/mefistofelix/auto.js.git"
+    "url": "git+https://github.com/mefistofelix/auto.js.git"
   },
   "homepage": "https://github.com/mefistofelix/auto.js#readme",
   "bugs": {

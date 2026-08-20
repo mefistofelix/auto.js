@@ -58,10 +58,16 @@ const VIPS_SYMBOLS = {
 
 const textEncoder = new TextEncoder();
 const cString = (value) => textEncoder.encode(`${value}\0`);
-let vips;
+let library;
 
-export function resolveLib() {
-  const require = createRequire(import.meta.resolve("npm:sharp"));
+function resolveLib() {
+  let sharp;
+  try {
+    sharp = import.meta.resolve("sharp");
+  } catch {
+    sharp = import.meta.resolve("npm:sharp");
+  }
+  const require = createRequire(sharp);
   const platform = require("./libvips.cjs").runtimePlatformArch();
   const dependencies = require("../package.json").optionalDependencies;
   const find = (subpath) => {
@@ -79,15 +85,15 @@ export function resolveLib() {
 }
 
 function loadVips() {
-  if (vips) return vips;
-  vips = Deno.dlopen(resolveLib(), VIPS_SYMBOLS);
-  if (vips.symbols.vips_init(cString("auto.js")) !== 0) {
-    vips.close();
-    vips = null;
+  if (library) return library;
+  library = Deno.dlopen(resolveLib(), VIPS_SYMBOLS);
+  if (library.symbols.vips_init(cString("auto.js")) !== 0) {
+    library.close();
+    library = null;
     throw new Error("Could not initialize libvips");
   }
-  vips.symbols.vips_cache_set_max(0);
-  return vips;
+  library.symbols.vips_cache_set_max(0);
+  return library;
 }
 
 function gValue(type) {
@@ -304,3 +310,12 @@ export async function decodeImage(
   if (!codec) throw new Error("Unsupported image format");
   return decodeBytes(data, codec, rect, grayscale);
 }
+
+export const vips = {
+  get lib() {
+    return resolveLib();
+  },
+  imageCodec,
+  encodeImage,
+  decodeImage,
+};

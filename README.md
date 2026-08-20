@@ -67,16 +67,17 @@ deno compile -A --output autojs.exe auto.js
 ```
 
 A dead literal import of `npm:sharp` makes Deno include Sharp's
-platform-specific optional dependency graph. At runtime AutoJS inspects Sharp's
-own `runtimePlatformArch()` and optional dependencies, resolves the matching
-libvips binary, and opens it directly with `Deno.dlopen`. Sharp's native addon
-is never loaded. The same mechanism works in `deno run` and compiled
-executables.
+platform-specific optional dependency graph. At runtime `vips.js` inspects
+Sharp's own `runtimePlatformArch()` and optional dependencies, resolves the
+matching libvips binary, and opens it directly with `Deno.dlopen`. Sharp's
+native addon is never loaded. The same mechanism works in `deno run` and
+compiled executables.
 
 The image codec uses fixed-signature GObject/VipsOperation C APIs, like pyvips,
 instead of libvips varargs. PNG is lossless; WebP save currently uses libvips
-quality 80 and effort 4. All image-library knowledge stays in `auto.js`: native
-backends exchange only raw BGRA8 images and never import an image codec.
+quality 80 and effort 4. All image-library knowledge stays in `vips.js`:
+`auto.js` imports its small codec API, while native backends exchange only raw
+BGRA8 images and never import an image codec.
 
 This native path was chosen after measuring essentially the same WebP Q80 speed
 as Sharp (about 131.8 ms versus 132.6 ms for a local 1920×1200 capture) and

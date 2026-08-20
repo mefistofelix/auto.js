@@ -9,8 +9,9 @@ The project keeps the common AAF/scenario core in **JavaScript** and uses **Deno
 FFI directly against operating-system APIs** in each backend. Windows uses Win32
 plus COM/WinRT; macOS uses CoreFoundation/CoreGraphics/ApplicationServices,
 AppKit, Vision and IOKit; Linux uses AT-SPI and, under X11,
-Xlib/EWMH/XRandR/XTest. Sharp (`npm:sharp`) is the only always-loaded
-external/native dependency and is used only for image encode/decode.
+Xlib/EWMH/XRandR/XTest. PNG/WebP encode/decode is isolated in `vips.js`, which
+calls libvips directly through Deno FFI. `npm:sharp` is only a dead package-graph
+anchor plus runtime platform metadata source; its native addon is never loaded.
 Tesseract.js (`npm:tesseract.js`) is the one approved optional lazy dependency
 and belongs only to the common OCR provider policy in `auto.js`. Direct CLI use
 may lazily load Deno's `jsr:@std/yaml` parser; it is CLI-only and must not become
@@ -24,9 +25,11 @@ changed.
 Keep the runtime split flat and explicit:
 
 - `auto.js` — common public entry point, backend selection, AAF
-  scenario/state/resource logic, shared image-codec boundary, and minimal
+  scenario/state/resource logic, shared image-policy boundary, and minimal
   `import.meta.main` YAML CLI. The CLI accepts exactly one file and delegates to
   `run()`; do not create a separate CLI layer or command framework.
+- `vips.js` — common PNG/WebP codec boundary, Sharp platform-package resolver,
+  and direct libvips C ABI bindings.
 - `auto_win.js` — Windows backend.
 - `auto_darwin.js` — macOS backend.
 - `auto_linux.js` — Linux backend; AT-SPI is common, with X11/Wayland capability
@@ -540,8 +543,8 @@ wrappers.
 
 `window` reuses the common window filters. `ocr` adds a case-insensitive regex
 `text` to the normal OCR capture source. `image` loads one WebP or PNG template
-once for that wait call through Sharp, then searches it in the requested
-screenshot geometry on every poll; `similarity` defaults to `0.98`. `change`
+once for that wait call through `vips.js`; `auto.js` then passes the decoded
+BGRA8 template to the backend matcher. `similarity` defaults to `0.98`. `change`
 captures the first available source image as the local baseline and compares
 every later poll against that initial baseline; absent `percent`, one changed
 RGB pixel is enough. Keep template/baseline state local to the individual wait
@@ -556,9 +559,9 @@ above the requested similarity.
 AAF `screenshot` always captures a new run-scoped image resource and returns
 `{image, rect, grayscale, path?, bytes?, format?}`. `image` is an opaque
 resource handle owned by the current `run()`. Optional `save` writes that new
-capture to disk immediately. Sharp encodes `webp | png`; WebP is the default,
-while an omitted `format` follows a recognized `.webp` or `.png` output
-extension. `screenshot_save` never captures: it accepts a retained image handle
+capture to disk immediately. `vips.js` encodes `webp | png` through direct
+libvips FFI; WebP is the default, while an omitted `format` follows a recognized
+`.webp` or `.png` output extension. `screenshot_save` never captures: it accepts a retained image handle
 plus `save` and writes that existing state-owned resource to disk.
 
 The internal capture helper returns raw top-down **BGRA8** because it maps
@@ -578,11 +581,12 @@ back to BGRA8 on demand. Do not use WebP lossless for final-state compaction by
 default unless profiling changes: current desktop measurements show much slower
 encoding than PNG for only modest additional savings.
 
-Sharp is used only at the image-codec boundary: raw BGRA8 is converted to RGBA
-for disk/final-state encoding, and encoded files or caller-returned image
-resources are decoded back to BGRA8 when needed. Default disk WebP uses quality
-80 to keep images sent to an LLM compact; explicit PNG and final-state PNG
-remain lossless. `grayscale: true` is optional and non-default.
+`vips.js` owns the image-codec boundary: raw BGRA8 is converted to RGBA for
+disk/final-state encoding, and encoded files or caller-returned image resources
+are decoded back to BGRA8 when needed. It resolves libvips from Sharp's platform
+optional dependencies but never loads Sharp's native addon. Default disk WebP
+uses libvips quality 80 to keep images sent to an LLM compact; explicit PNG and
+final-state PNG remain lossless. `grayscale: true` is optional and non-default.
 
 Full-window capture first uses `PrintWindow(PW_RENDERFULLCONTENT)` and falls
 back to a screen `BitBlt` if needed. Display captures and explicit `rect`
@@ -591,8 +595,8 @@ captured area under `rect`.
 
 ## OCR
 
-OCR stays platform-native and dependency-free beyond the already approved Sharp
-codec boundary.
+OCR stays platform-native and dependency-free beyond the common `vips.js` codec
+boundary.
 
 On Windows:
 

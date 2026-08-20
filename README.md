@@ -5,10 +5,11 @@ operating-system backends.
 
 The common AAF/scenario core lives in `auto.js`; native operations live in small
 backend files using Deno FFI directly against the operating system. Windows uses
-Win32, COM, and WinRT. **Sharp is the only always-loaded external dependency**
-and is used only for WebP/PNG image codecs. Tesseract.js is an optional lazy OCR
-provider loaded only when selected or needed by the Linux fallback; there is no
-project-owned native library and no build step.
+Win32, COM, and WinRT. PNG/WebP encode/decode uses libvips directly through its
+C ABI and Deno FFI. `npm:sharp` is only a package-graph anchor and source of the
+platform libvips binaries; the Sharp native addon is never loaded. Tesseract.js
+is an optional lazy OCR provider loaded only when selected or needed by the
+Linux fallback; there is no project-owned native library or build step.
 
 AutoJS exposes both direct JavaScript functions and **AAF — Automation Action
 Format**, a small JSON/YAML-friendly action model for serialized desktop
@@ -55,6 +56,39 @@ input, and file access:
 ```text
 deno run -A examples/suite.js
 ```
+
+## Compiled CLI
+
+The same entry point compiles directly, without self-extraction or manually
+including native libraries:
+
+```text
+deno compile -A --output autojs.exe auto.js
+```
+
+A dead literal import of `npm:sharp` makes Deno include Sharp's
+platform-specific optional dependency graph. At runtime AutoJS inspects Sharp's
+own `runtimePlatformArch()` and optional dependencies, resolves the matching
+libvips binary, and opens it directly with `Deno.dlopen`. Sharp's native addon
+is never loaded. The same mechanism works in `deno run` and compiled
+executables.
+
+The image codec uses fixed-signature GObject/VipsOperation C APIs, like pyvips,
+instead of libvips varargs. PNG is lossless; WebP save currently uses libvips
+quality 80 and effort 4. All image-library knowledge stays in `auto.js`: native
+backends exchange only raw BGRA8 images and never import an image codec.
+
+This native path was chosen after measuring essentially the same WebP Q80 speed
+as Sharp (about 131.8 ms versus 132.6 ms for a local 1920×1200 capture) and
+about 93 MB steady RSS after repeated encodes. The constrained WASM libvips
+experiment was about 217 MB RSS. Direct FFI therefore keeps native libvips
+performance and memory behavior while avoiding Sharp's native-addon loading
+problem in normal `deno compile` executables.
+
+Cross-compilation of this CLI is verified for macOS x64/arm64 and Linux glibc
+x64/arm64. The full runtime suite and compiled executable are currently
+runtime-tested on Windows x64; macOS/Linux backends remain compile-verified
+until they are exercised on those operating systems.
 
 ## Direct API
 

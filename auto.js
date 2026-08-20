@@ -1,4 +1,12 @@
-import sharp from "npm:sharp";
+import { createRequire } from "node:module";
+
+if (false) {
+  await import("npm:sharp");
+  await import("./auto_win.js");
+  await import("./auto_darwin.js");
+  await import("./auto_linux.js");
+  await import("jsr:@std/yaml@1.2.0");
+}
 
 const backendPath = {
   windows: "./auto_win.js",
@@ -28,7 +36,6 @@ export const {
   mouse_button,
   input_reset,
   clipboard,
-  wait,
   system,
 } = backend;
 
@@ -52,8 +59,241 @@ function swapRedBlue(data) {
   return out;
 }
 
-function sharpImage({ rect: { width, height }, data }) {
-  return sharp(swapRedBlue(data), { raw: { width, height, channels: 4 } });
+const VIPS_SYMBOLS = {
+  vips_init: { parameters: ["buffer"], result: "i32" },
+  vips_cache_set_max: { parameters: ["i32"], result: "void" },
+  vips_image_new_from_memory: {
+    parameters: ["buffer", "usize", "i32", "i32", "i32", "i32"],
+    result: "pointer",
+  },
+  vips_image_get_type: { parameters: [], result: "usize" },
+  vips_blob_get_type: { parameters: [], result: "usize" },
+  vips_operation_new: { parameters: ["buffer"], result: "pointer" },
+  vips_object_set_argument_from_string: {
+    parameters: ["pointer", "buffer", "buffer"],
+    result: "i32",
+  },
+  vips_cache_operation_build: { parameters: ["pointer"], result: "pointer" },
+  vips_value_set_blob: {
+    parameters: ["buffer", "pointer", "buffer", "usize"],
+    result: "void",
+  },
+  vips_value_get_blob: { parameters: ["buffer", "buffer"], result: "pointer" },
+  vips_object_unref_outputs: { parameters: ["pointer"], result: "void" },
+  vips_image_get_width: { parameters: ["pointer"], result: "i32" },
+  vips_image_get_height: { parameters: ["pointer"], result: "i32" },
+  vips_image_get_bands: { parameters: ["pointer"], result: "i32" },
+  vips_image_write_to_memory: {
+    parameters: ["pointer", "buffer"],
+    result: "pointer",
+  },
+  g_value_init: { parameters: ["buffer", "usize"], result: "pointer" },
+  g_value_set_object: { parameters: ["buffer", "pointer"], result: "void" },
+  g_value_get_object: { parameters: ["buffer"], result: "pointer" },
+  g_value_unset: { parameters: ["buffer"], result: "void" },
+  g_object_set_property: {
+    parameters: ["pointer", "buffer", "buffer"],
+    result: "void",
+  },
+  g_object_get_property: {
+    parameters: ["pointer", "buffer", "buffer"],
+    result: "void",
+  },
+  g_object_unref: { parameters: ["pointer"], result: "void" },
+  g_free: { parameters: ["pointer"], result: "void" },
+};
+
+const textEncoder = new TextEncoder();
+const cString = (value) => textEncoder.encode(`${value}\0`);
+let vips;
+
+function loadVips() {
+  if (vips) return vips;
+  const require = createRequire(import.meta.resolve("npm:sharp"));
+  const platform = require("./libvips.cjs").runtimePlatformArch();
+  const dependencies = require("../package.json").optionalDependencies;
+  const find = (subpath) => {
+    for (const dependency in dependencies) {
+      if (!dependency.endsWith(platform)) continue;
+      try {
+        return require.resolve(`${dependency}/${subpath}`);
+      } catch { /* optional dependency without this export */ }
+    }
+  };
+  const path = find("binary") ??
+    find("sharp.node")?.replace(/index\.cjs$/, "lib/libvips-42.dll");
+  if (!path) throw new Error("Could not resolve Sharp's libvips binary");
+  vips = Deno.dlopen(path, VIPS_SYMBOLS);
+  if (vips.symbols.vips_init(cString("auto.js")) !== 0) {
+    vips.close();
+    vips = null;
+    throw new Error("Could not initialize libvips");
+  }
+  vips.symbols.vips_cache_set_max(0);
+  return vips;
+}
+
+function gValue(type) {
+  const value = new Uint8Array(24);
+  loadVips().symbols.g_value_init(value, type);
+  return value;
+}
+
+function encodeImage({ rect: { width, height }, data }, codec) {
+  const symbols = loadVips().symbols;
+  const rgba = swapRedBlue(data);
+  const image = symbols.vips_image_new_from_memory(
+    rgba,
+    BigInt(rgba.length),
+    width,
+    height,
+    4,
+    0,
+  );
+  if (!image) throw new Error("Could not create libvips image");
+  const operation = symbols.vips_operation_new(cString(`${codec}save_buffer`));
+  if (!operation) {
+    symbols.g_object_unref(image);
+    throw new Error(`Could not create libvips ${codec} encoder`);
+  }
+
+  let built;
+  try {
+    const input = gValue(symbols.vips_image_get_type());
+    symbols.g_value_set_object(input, image);
+    symbols.g_object_set_property(operation, cString("in"), input);
+    symbols.g_value_unset(input);
+    if (codec === "webp") {
+      symbols.vips_object_set_argument_from_string(
+        operation,
+        cString("Q"),
+        cString("80"),
+      );
+      symbols.vips_object_set_argument_from_string(
+        operation,
+        cString("effort"),
+        cString("4"),
+      );
+    }
+    built = symbols.vips_cache_operation_build(operation);
+    if (!built) throw new Error(`Could not encode ${codec}`);
+
+    const output = gValue(symbols.vips_blob_get_type());
+    try {
+      symbols.g_object_get_property(built, cString("buffer"), output);
+      const length = new BigUint64Array(1);
+      const pointer = symbols.vips_value_get_blob(output, length);
+      if (!pointer) throw new Error(`Could not encode ${codec}`);
+      return new Uint8Array(
+        new Deno.UnsafePointerView(pointer).getArrayBuffer(Number(length[0])),
+      ).slice();
+    } finally {
+      symbols.g_value_unset(output);
+    }
+  } finally {
+    if (built) {
+      symbols.vips_object_unref_outputs(built);
+      symbols.g_object_unref(built);
+      if (built !== operation) symbols.g_object_unref(operation);
+    } else {
+      symbols.g_object_unref(operation);
+    }
+    symbols.g_object_unref(image);
+  }
+}
+
+function decodePixels(data, bands) {
+  const pixels = data.length / bands;
+  const out = new Uint8Array(pixels * 4);
+  for (let p = 0; p < pixels; p++) {
+    const source = p * bands, target = p * 4;
+    if (bands <= 2) {
+      out[target] = out[target + 1] = out[target + 2] = data[source];
+      out[target + 3] = bands === 2 ? data[source + 1] : 255;
+    } else {
+      out[target] = data[source + 2];
+      out[target + 1] = data[source + 1];
+      out[target + 2] = data[source];
+      out[target + 3] = bands >= 4 ? data[source + 3] : 255;
+    }
+  }
+  return out;
+}
+
+function decodeBytes(data, codec, rect = {}, grayscale = false) {
+  const symbols = loadVips().symbols;
+  const operation = symbols.vips_operation_new(cString(`${codec}load_buffer`));
+  if (!operation) throw new Error(`Could not create libvips ${codec} decoder`);
+  let built;
+  try {
+    const input = gValue(symbols.vips_blob_get_type());
+    symbols.vips_value_set_blob(input, null, data, BigInt(data.length));
+    symbols.g_object_set_property(operation, cString("buffer"), input);
+    symbols.g_value_unset(input);
+    built = symbols.vips_cache_operation_build(operation);
+    if (!built) throw new Error(`Could not decode ${codec}`);
+
+    const output = gValue(symbols.vips_image_get_type());
+    try {
+      symbols.g_object_get_property(built, cString("out"), output);
+      const image = symbols.g_value_get_object(output);
+      const width = symbols.vips_image_get_width(image);
+      const height = symbols.vips_image_get_height(image);
+      const bands = symbols.vips_image_get_bands(image);
+      const length = new BigUint64Array(1);
+      const pointer = symbols.vips_image_write_to_memory(image, length);
+      if (!pointer || bands < 1) throw new Error(`Could not decode ${codec}`);
+      try {
+        const raw = new Uint8Array(
+          new Deno.UnsafePointerView(pointer).getArrayBuffer(Number(length[0])),
+        );
+        return {
+          rect: { x: rect.x ?? 0, y: rect.y ?? 0, width, height },
+          format: "bgra8",
+          grayscale: !!grayscale,
+          data: decodePixels(raw, bands),
+        };
+      } finally {
+        symbols.g_free(pointer);
+      }
+    } finally {
+      symbols.g_value_unset(output);
+    }
+  } finally {
+    if (built) {
+      symbols.vips_object_unref_outputs(built);
+      symbols.g_object_unref(built);
+      if (built !== operation) symbols.g_object_unref(operation);
+    } else {
+      symbols.g_object_unref(operation);
+    }
+  }
+}
+
+function encodedCodec(data, format) {
+  const codec = String(format ?? "").toLowerCase();
+  if (codec === "png" || codec === "webp") return codec;
+  if (
+    data.length >= 12 && data[0] === 0x52 && data[1] === 0x49 &&
+    data[2] === 0x46 && data[3] === 0x46 && data[8] === 0x57 &&
+    data[9] === 0x45 && data[10] === 0x42 && data[11] === 0x50
+  ) return "webp";
+  if (
+    data.length >= 8 && data[0] === 0x89 && data[1] === 0x50 &&
+    data[2] === 0x4e && data[3] === 0x47
+  ) return "png";
+  return null;
+}
+
+async function decodeImage(source, rect = {}, grayscale = false, format) {
+  const data = typeof source === "string"
+    ? await Deno.readFile(source)
+    : source;
+  const codec =
+    imageCodec(format, typeof source === "string" ? source : null) ??
+      encodedCodec(data, format);
+  if (!codec) throw new Error("Unsupported image format");
+  return decodeBytes(data, codec, rect, grayscale);
 }
 
 async function imageBGRA(image) {
@@ -61,22 +301,12 @@ async function imageBGRA(image) {
   if (image.format === "bgra8") return image;
   if (!(image.data instanceof Uint8Array)) return null;
   try {
-    const { data, info } = await sharp(image.data).ensureAlpha().raw().toBuffer(
-      {
-        resolveWithObject: true,
-      },
+    return await decodeImage(
+      image.data,
+      image.rect,
+      image.grayscale,
+      image.format,
     );
-    return {
-      rect: {
-        x: image.rect?.x ?? 0,
-        y: image.rect?.y ?? 0,
-        width: info.width,
-        height: info.height,
-      },
-      format: "bgra8",
-      grayscale: !!image.grayscale,
-      data: swapRedBlue(data),
-    };
   } catch {
     return null;
   }
@@ -122,7 +352,7 @@ async function tesseractOcr(options) {
       1,
       cachePath ? { cachePath } : { cacheMethod: "none" },
     );
-    const png = await sharpImage(image).png().toBuffer();
+    const png = encodeImage(image, "png");
     const { data } = await worker.recognize(png);
     return { text: data.text, rect: image.rect };
   } catch {
@@ -142,14 +372,29 @@ export async function ocr(options = {}) {
   return result ?? (Deno.build.os === "linux" ? tesseractOcr(options) : null);
 }
 
+export async function wait(options = 0) {
+  if (
+    !options || typeof options !== "object" || Array.isArray(options) ||
+    options.image == null
+  ) return backend.wait(options);
+
+  const spec = typeof options.image === "string"
+    ? { path: options.image }
+    : options.image;
+  if (!spec || typeof spec !== "object" || !spec.path) return null;
+  try {
+    const template = await decodeImage(spec.path);
+    return backend.wait({ ...options, image: { ...spec, template } });
+  } catch {
+    return null;
+  }
+}
+
 async function saveImage(image, path, format) {
   if (!path) return {};
   const codec = imageCodec(format, path);
   if (!codec) return {};
-  const pipeline = sharpImage(image);
-  const bytes = codec === "webp"
-    ? await pipeline.webp({ quality: 80 }).toBuffer()
-    : await pipeline.png().toBuffer();
+  const bytes = encodeImage(image, codec);
   await Deno.writeFile(path, bytes);
   return { path, bytes: bytes.length, format: codec };
 }
@@ -229,7 +474,7 @@ function resolveActionResources(name, value, resources) {
   return { ...value, image };
 }
 
-const ACTIONS = { ...backend, ocr };
+const ACTIONS = { ...backend, ocr, wait };
 delete ACTIONS.captureScreenshot;
 delete ACTIONS.inputState;
 delete ACTIONS.releaseInput;
@@ -385,7 +630,7 @@ async function outputImage(image) {
       rect: image.rect,
       format: "png",
       grayscale: image.grayscale,
-      data: await sharpImage(image).png().toBuffer(),
+      data: encodeImage(image, "png"),
     };
   } catch {
     return image;

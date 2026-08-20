@@ -1,7 +1,5 @@
-import sharp from "npm:sharp";
-
 // auto.js — Windows desktop automation for Deno.
-// Current target: Windows x64 + Deno. Native OS APIs + Sharp for image codecs.
+// Current target: Windows x64 + Deno. Native OS APIs only.
 if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") {
   throw new Error("auto.js currently supports Windows x64 only");
 }
@@ -1325,16 +1323,6 @@ export function captureScreenshot(options = {}) {
     gdi32.symbols.DeleteDC(memory);
     user32.symbols.ReleaseDC(null, screen);
   }
-}
-
-function swapRedBlue(data) {
-  const out = new Uint8Array(data).slice();
-  for (let i = 0; i < out.length; i += 4) {
-    const red = out[i];
-    out[i] = out[i + 2];
-    out[i + 2] = red;
-  }
-  return out;
 }
 
 // Geometry, input, and clipboard
@@ -2687,38 +2675,8 @@ async function asyncResult(operation) {
   }
 }
 
-async function decodeImage(source, rect = {}, grayscale = false) {
-  const { data, info } = await sharp(source).ensureAlpha().raw().toBuffer({
-    resolveWithObject: true,
-  });
-  return {
-    rect: {
-      x: rect.x ?? 0,
-      y: rect.y ?? 0,
-      width: info.width,
-      height: info.height,
-    },
-    format: "bgra8",
-    grayscale: !!grayscale,
-    data: swapRedBlue(data),
-  };
-}
-
-async function imageBGRA(image) {
-  if (!image) return null;
-  if (image.format === "bgra8") return image;
-  if (!(image.data instanceof Uint8Array)) return null;
-  try {
-    return await decodeImage(image.data, image.rect, image.grayscale);
-  } catch {
-    return null;
-  }
-}
-
 export async function ocr(options = {}) {
-  const image = options.image
-    ? await imageBGRA(options.image)
-    : captureScreenshot(options);
+  const image = options.image ?? captureScreenshot(options);
   if (!image) return null;
   const bitmap = softwareBitmapFromBGRA(image),
     statics = activationFactory(
@@ -2854,13 +2812,11 @@ async function prepareWaitCondition(kind, spec) {
     return spec && typeof spec === "object" && spec.text != null ? spec : null;
   }
   if (kind === "image") {
-    if (typeof spec === "string") spec = { path: spec };
-    if (!spec || typeof spec !== "object" || !spec.path) return null;
-    try {
-      return { spec, template: await decodeImage(spec.path) };
-    } catch {
+    if (!spec || typeof spec !== "object" || !spec.path || !spec.template) {
       return null;
     }
+    const { template, ...source } = spec;
+    return { spec: source, template };
   }
   spec ??= {};
   if (typeof spec !== "object" || Array.isArray(spec)) return null;

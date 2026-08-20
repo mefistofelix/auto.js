@@ -152,6 +152,7 @@ top-level `interval` as the polling cadence for `window`, `ocr`, `image`, and
 - `display_find({display?})`
 - `system({wake? | awake?})` (`system({})` queries lock state)
 - `run(actions)`
+- `vips` namespace exposing `lib`, `imageCodec`, `encodeImage`, and `decodeImage`; `lib` is the lazily resolved platform libvips shared-library path for callers that want to open their own symbols with Deno FFI
 - scenario-only `state` action for explicit `$.state` mutation
 - scenario-only `screenshot` action for capture, run-scoped image resources, and
   optional `save`

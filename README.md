@@ -110,6 +110,59 @@ if (win) {
 }
 ```
 
+## libvips API
+
+AutoJS also exposes its small direct-libvips boundary as `vips`. This is useful
+when a Deno program wants the libvips binary bundled through Sharp's platform
+packages without loading Sharp's native addon, including from `deno compile`.
+
+`vips.lib` lazily resolves the platform-specific libvips shared-library path.
+Use that path with Deno's normal FFI API when you need libvips symbols beyond
+the small codec helpers exposed here.
+
+```js
+import { vips } from "npm:@mefistofelix/auto.js";
+
+const library = Deno.dlopen(vips.lib, {
+  vips_version_string: { parameters: [], result: "pointer" },
+});
+
+try {
+  // Use library.symbols with the Deno FFI signatures your application needs.
+} finally {
+  library.close();
+}
+```
+
+Public surface:
+
+```ts
+vips.lib: string
+
+vips.imageCodec(format?: string, path?: string): "png" | "webp" | null
+
+vips.encodeImage(
+  image: {
+    rect: { width: number; height: number };
+    data: Uint8Array; // BGRA8
+  },
+  codec: "png" | "webp",
+  scale?: number,
+): Uint8Array
+
+vips.decodeImage(
+  source: string | Uint8Array,
+  rect?: { x?: number; y?: number },
+  grayscale?: boolean,
+  format?: "png" | "webp",
+): Promise<{
+  rect: { x: number; y: number; width: number; height: number };
+  format: "bgra8";
+  grayscale: boolean;
+  data: Uint8Array;
+}>
+```
+
 ## AAF scenario
 
 The same primitives can be represented as JSON/YAML-compatible actions and

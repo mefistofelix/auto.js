@@ -1,4 +1,13 @@
-import { decodeImage, encodeImage, imageCodec } from "./vips.js";
+import * as vipsInternal from "./vips.js";
+
+export const vips = {
+  get lib() {
+    return vipsInternal.resolveLib();
+  },
+  imageCodec: vipsInternal.imageCodec,
+  encodeImage: vipsInternal.encodeImage,
+  decodeImage: vipsInternal.decodeImage,
+};
 
 if (false) {
   await import("./auto_win.js");
@@ -47,7 +56,7 @@ async function imageBGRA(image) {
   if (image.format === "bgra8") return image;
   if (!(image.data instanceof Uint8Array)) return null;
   try {
-    return await decodeImage(
+    return await vipsInternal.decodeImage(
       image.data,
       image.rect,
       image.grayscale,
@@ -98,7 +107,7 @@ async function tesseractOcr(options) {
       1,
       cachePath ? { cachePath } : { cacheMethod: "none" },
     );
-    const png = encodeImage(image, "png");
+    const png = vipsInternal.encodeImage(image, "png");
     const { data } = await worker.recognize(png);
     return { text: data.text, rect: image.rect };
   } catch {
@@ -129,7 +138,7 @@ export async function wait(options = 0) {
     : options.image;
   if (!spec || typeof spec !== "object" || !spec.path) return null;
   try {
-    const template = await decodeImage(spec.path);
+    const template = await vipsInternal.decodeImage(spec.path);
     return backend.wait({ ...options, image: { ...spec, template } });
   } catch {
     return null;
@@ -150,9 +159,9 @@ function imageScale(value) {
 
 async function saveImage(image, path, format, scale = 1) {
   if (!path) return {};
-  const codec = imageCodec(format, path);
+  const codec = vipsInternal.imageCodec(format, path);
   if (!codec) return {};
-  const bytes = encodeImage(image, codec, scale);
+  const bytes = vipsInternal.encodeImage(image, codec, scale);
   await Deno.writeFile(path, bytes);
   return { path, bytes: bytes.length, format: codec, scale };
 }
@@ -195,7 +204,7 @@ async function scenarioScreenshot(options, resources) {
   const image = backend.captureScreenshot(capture);
   if (!image) return null;
   const id = crypto.randomUUID();
-  const outputFormat = imageCodec(format, save) ?? "webp";
+  const outputFormat = vipsInternal.imageCodec(format, save) ?? "webp";
   resources.set(id, { image, outputFormat, outputScale });
   try {
     return imageResult(
@@ -410,7 +419,7 @@ async function outputImage(resource) {
       format: resource.outputFormat,
       grayscale: resource.image.grayscale,
       scale: resource.outputScale,
-      data: encodeImage(
+      data: vipsInternal.encodeImage(
         resource.image,
         resource.outputFormat,
         resource.outputScale,

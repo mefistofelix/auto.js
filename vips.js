@@ -60,9 +60,8 @@ const textEncoder = new TextEncoder();
 const cString = (value) => textEncoder.encode(`${value}\0`);
 let vips;
 
-function loadVips() {
-  if (vips) return vips;
-  const require = createRequire(createRequire(import.meta.url).resolve("sharp"));
+export function resolveLib() {
+  const require = createRequire(import.meta.resolve("npm:sharp"));
   const platform = require("./libvips.cjs").runtimePlatformArch();
   const dependencies = require("../package.json").optionalDependencies;
   const find = (subpath) => {
@@ -76,7 +75,12 @@ function loadVips() {
   const path = find("binary") ??
     find("sharp.node")?.replace(/index\.cjs$/, "lib/libvips-42.dll");
   if (!path) throw new Error("Could not resolve Sharp's libvips binary");
-  vips = Deno.dlopen(path, VIPS_SYMBOLS);
+  return path;
+}
+
+function loadVips() {
+  if (vips) return vips;
+  vips = Deno.dlopen(resolveLib(), VIPS_SYMBOLS);
   if (vips.symbols.vips_init(cString("auto.js")) !== 0) {
     vips.close();
     vips = null;
@@ -294,9 +298,9 @@ export async function decodeImage(
   const data = typeof source === "string"
     ? await Deno.readFile(source)
     : source;
-  const codec =
-    imageCodec(format, typeof source === "string" ? source : null) ??
-      encodedCodec(data, format);
+  const codec = typeof source === "string"
+    ? imageCodec(format, source)
+    : encodedCodec(data, format);
   if (!codec) throw new Error("Unsupported image format");
   return decodeBytes(data, codec, rect, grayscale);
 }

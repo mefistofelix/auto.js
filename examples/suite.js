@@ -159,8 +159,8 @@ const {
   wait,
   run,
   system,
+  vips,
 } = await import("../auto.js");
-const { decodeImage } = await import("../vips.js");
 
 function assert(value, message) {
   if (!value) throw new Error(message);
@@ -214,6 +214,13 @@ let root = null;
 let awake = false;
 
 try {
+  const lib = Deno.dlopen(vips.lib, {
+    vips_init: { parameters: ["buffer"], result: "i32" },
+  });
+  lib.close();
+  same(vips.imageCodec(undefined, "image.png"), "png", "public vips codec inference failed");
+  check("public vips namespace", { lib: vips.lib });
+
   const session = system();
   assert(typeof session.locked === "boolean", "system lock-state detection failed");
   same((await run([{ system: {} }])).results[0]?.locked, session.locked, "scenario system query failed");
@@ -635,7 +642,7 @@ try {
   const scaledImage = scaled.state.shot;
   same(scaled.results[0].scale, .5, "screenshot scale was not normalized");
   same(scaledImage.scale, .5, "returned image scale missing");
-  const scaledRaw = await decodeImage(
+  const scaledRaw = await vips.decodeImage(
     scaledImage.data,
     scaledImage.rect,
     scaledImage.grayscale,

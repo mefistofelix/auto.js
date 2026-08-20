@@ -1,0 +1,35 @@
+{
+  "name": "auto.js",
+  "version": "0.1.0",
+  "description": "Minimal desktop automation for Deno using native operating-system APIs and AAF scenarios.",
+  "type": "module",
+  "exports": "./index.js",
+  "files": [
+    "index.js",
+    "auto.js",
+    "auto_win.js",
+    "auto_darwin.js",
+    "auto_linux.js",
+    "vips.js",
+    "AAF_SPEC.md"
+  ],
+  "keywords": [
+    "deno",
+    "desktop",
+    "automation",
+    "ffi",
+    "accessibility",
+    "ocr"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mefistofelix/auto.js.git"
+  },
+  "homepage": "https://github.com/mefistofelix/auto.js#readme",
+  "bugs": {
+    "url": "https://github.com/mefistofelix/auto.js/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

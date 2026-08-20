@@ -39,6 +39,11 @@ Keep the runtime split flat and explicit:
 - `DEV_PREF.md` — repository engineering preferences; apply it as written.
 - `AAF_SPEC.md` — authoritative user-facing, language-agnostic Automation Action
   Format (AAF) specification.
+- `npm/` — npm packaging boundary. It contains only the package manifest and a
+  tiny `index.js` entry point; publication stages the runtime source files into
+  this directory without changing the normal repository layout.
+- `.github/workflows/npm.yml` — minimal npm publication workflow. Keep the
+  ordinary release path build-free and publish the staged source files directly.
 
 Keep `AAF_SPEC.md` visually scannable. The document title and every numbered
 macro-section use H1; major units inside a macro-section use H2. In the Action
@@ -449,12 +454,29 @@ resolve Tesseract. Create/terminate the Tesseract worker inside each direct OCR
 call: a persistent worker keeps Deno alive and would introduce hidden process
 lifetime. Store trained-data cache under the user's cache directory, never the
 repository cwd. Preserve the project decision of no `deno.json`, `deno.lock`,
-tracked/local `node_modules`, manual npm install, or subprocess OCR.
+tracked/local `node_modules`, manual npm install, or subprocess OCR. npm
+publication metadata lives under `npm/`, not in a root `package.json`, so the
+normal Deno project remains unchanged. Keep the runtime's explicit `npm:` imports
+and Deno global-cache behavior rather than converting development to a Node/npm
+dependency workflow.
 
 Verification claims must stay precise. Windows has the full self-contained
 runtime suite. Until actual macOS/Linux test machines are used, Darwin/Linux may
 be described as formatted/linted/type-checked and ABI-reviewed, but never as
 runtime-tested or fully certified.
+
+npm publishing is intentionally source-only. `npm/package.json` exports
+`npm/index.js`; that entry point re-exports `./auto.js`. The workflow copies the
+runtime files, AAF specification, and README into `npm/`, then publishes that
+directory. There is no build/transpile step and no package manifest in the
+repository root. `.github/workflows/npm.yml` publishes with npm Trusted
+Publishing/OIDC and provenance once the package has a trusted publisher
+configured. Because npm
+cannot configure a trusted publisher before a package exists, the same workflow
+may use the `NPM_TOKEN` repository secret only for the initial bootstrap
+publication; remove that secret after configuring the trusted publisher for
+`mefistofelix/auto.js` and `npm.yml`. Version tags matching `v*` publish through
+the workflow, and `workflow_dispatch` remains available for explicit reruns.
 
 ## Displays and coordinates
 

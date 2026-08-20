@@ -477,6 +477,16 @@ The unscoped `auto.js` name is rejected by npm as too similar to the existing
 `autojs` package. Version tags matching `v*` publish through the workflow, and
 `workflow_dispatch` remains available for explicit reruns.
 
+Keep scenario image resources raw BGRA8 for their entire run-scoped lifetime so
+OCR, matching, waits, and repeated saves never consume a compressed
+intermediate. Only saved/final-state output is scaled or encoded: WebP by
+default for compact transport, or PNG when selected by `screenshot.format`
+(with the `save` extension providing codec inference when `format` is omitted).
+`screenshot.scale` defaults to `100%`, preserves aspect ratio, may only downscale,
+and is stored as a normalized ratio with the resource so final materialization
+and later `screenshot_save` can reuse it. Keep `rect` in original screen-space
+coordinates so callers can map reduced-image coordinates back using `scale`.
+
 ## Displays and coordinates
 
 Public display identity is only the integer `index`. Internal monitor handles,

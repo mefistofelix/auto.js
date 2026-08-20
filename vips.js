@@ -98,7 +98,38 @@ export function imageCodec(format, path) {
   return codec === "png" || codec === "webp" ? codec : null;
 }
 
-export function encodeImage({ rect: { width, height }, data }, codec) {
+function imageInput(symbols, operation, image) {
+  const input = gValue(symbols.vips_image_get_type());
+  symbols.g_value_set_object(input, image);
+  symbols.g_object_set_property(operation, cString("in"), input);
+  symbols.g_value_unset(input);
+}
+
+function operationImage(symbols, operation) {
+  const output = gValue(symbols.vips_image_get_type());
+  try {
+    symbols.g_object_get_property(operation, cString("out"), output);
+    return symbols.g_value_get_object(output);
+  } finally {
+    symbols.g_value_unset(output);
+  }
+}
+
+function unrefOperation(symbols, operation, built) {
+  if (built) {
+    symbols.vips_object_unref_outputs(built);
+    symbols.g_object_unref(built);
+    if (built !== operation) symbols.g_object_unref(operation);
+  } else if (operation) {
+    symbols.g_object_unref(operation);
+  }
+}
+
+export function encodeImage(
+  { rect: { width, height }, data },
+  codec,
+  scale = 1,
+) {
   const symbols = loadVips().symbols;
   const rgba = swapRedBlue(data);
   const image = symbols.vips_image_new_from_memory(
@@ -110,18 +141,33 @@ export function encodeImage({ rect: { width, height }, data }, codec) {
     0,
   );
   if (!image) throw new Error("Could not create libvips image");
-  const operation = symbols.vips_operation_new(cString(`${codec}save_buffer`));
-  if (!operation) {
-    symbols.g_object_unref(image);
-    throw new Error(`Could not create libvips ${codec} encoder`);
-  }
 
+  let resize;
+  let resized;
+  let source = image;
+  let operation;
   let built;
   try {
-    const input = gValue(symbols.vips_image_get_type());
-    symbols.g_value_set_object(input, image);
-    symbols.g_object_set_property(operation, cString("in"), input);
-    symbols.g_value_unset(input);
+    if (scale !== 1) {
+      resize = symbols.vips_operation_new(cString("resize"));
+      if (!resize) throw new Error("Could not create libvips resize operation");
+      imageInput(symbols, resize, image);
+      symbols.vips_object_set_argument_from_string(
+        resize,
+        cString("scale"),
+        cString(String(scale)),
+      );
+      resized = symbols.vips_cache_operation_build(resize);
+      if (!resized) throw new Error("Could not resize image");
+      source = operationImage(symbols, resized);
+      if (!source) throw new Error("Could not read resized image");
+    }
+
+    operation = symbols.vips_operation_new(cString(`${codec}save_buffer`));
+    if (!operation) {
+      throw new Error(`Could not create libvips ${codec} encoder`);
+    }
+    imageInput(symbols, operation, source);
     if (codec === "webp") {
       symbols.vips_object_set_argument_from_string(
         operation,
@@ -150,13 +196,8 @@ export function encodeImage({ rect: { width, height }, data }, codec) {
       symbols.g_value_unset(output);
     }
   } finally {
-    if (built) {
-      symbols.vips_object_unref_outputs(built);
-      symbols.g_object_unref(built);
-      if (built !== operation) symbols.g_object_unref(operation);
-    } else {
-      symbols.g_object_unref(operation);
-    }
+    unrefOperation(symbols, operation, built);
+    unrefOperation(symbols, resize, resized);
     symbols.g_object_unref(image);
   }
 }

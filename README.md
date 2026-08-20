@@ -169,6 +169,16 @@ See [`AAF_SPEC.md`](AAF_SPEC.md) for the complete AAF specification.
 
 ## Verification suite
 
+Images retained in final AAF state remain raw while a scenario is executing, so
+OCR and image matching never operate on a compressed intermediate. `run()`
+encodes those caller-owned images only at the return boundary, using WebP by
+default for compact transport payloads; `screenshot.format: png` requests PNG.
+`screenshot.scale` can reduce encoded output while preserving aspect ratio
+(`50%` or `0.5`, default `100%`) without changing the full-resolution image seen
+by OCR/matching during the run. Returned image `rect` values always stay in
+absolute desktop coordinates even when the input crop used window-relative or
+special geometry; `scale` maps the encoded pixels back to that source rectangle.
+
 `examples/suite.js` is the primary regression suite. It creates its own private
 Win32 fixture process and controls that fixture instead of relying on
 pre-existing desktop state.

@@ -160,6 +160,7 @@ const {
   run,
   system,
 } = await import("../auto.js");
+const { decodeImage } = await import("../vips.js");
 
 function assert(value, message) {
   if (!value) throw new Error(message);
@@ -517,6 +518,16 @@ try {
   same(defaultSaved?.format, "webp", "default screenshot codec must be WebP");
   const defaultBytes = await Deno.readFile(defaultImage);
   same(new TextDecoder().decode(defaultBytes.subarray(0, 4)), "RIFF", "default WebP signature missing");
+  const resolvedShot = (await run([{
+    screenshot: {
+      window: { wid: root.wid },
+      rect: { at: "centerWC", width: "50%WC", height: "50%WC" },
+    },
+  }])).results[0];
+  same(resolvedShot.rect.x, Math.round(root.client.x + root.client.width * .25), "screenshot rect x must be absolute screen coordinates");
+  same(resolvedShot.rect.y, Math.round(root.client.y + root.client.height * .25), "screenshot rect y must be absolute screen coordinates");
+  same(resolvedShot.rect.width, Math.round(root.client.width * .5), "screenshot special width resolution failed");
+  same(resolvedShot.rect.height, Math.round(root.client.height * .5), "screenshot special height resolution failed");
 
   const recognized = await ocr({ window: { wid: root.wid } });
   assert(recognized?.text, "ocr returned no text");
@@ -607,12 +618,41 @@ try {
     { state: { shot: "$.ret.image", alias: "$.ret.image" } },
   ]);
   const returnedImage = returned.state.shot;
-  assert(returnedImage?.format === "png" && returnedImage.data instanceof Uint8Array, "run final state did not materialize PNG image resource");
-  assert(returnedImage.data.length > 0 && returnedImage.data.length < returnedImage.rect.width * returnedImage.rect.height * 4, "returned PNG image was not compacted");
+  assert(returnedImage?.format === "webp" && returnedImage.data instanceof Uint8Array, "run final state did not materialize default WebP image resource");
+  same(returnedImage.scale, 1, "run final state image scale must default to 100%");
+  assert(returnedImage.data.length > 0 && returnedImage.data.length < returnedImage.rect.width * returnedImage.rect.height * 4, "returned WebP image was not compacted");
+  same(new TextDecoder().decode(returnedImage.data.subarray(0, 4)), "RIFF", "returned WebP signature missing");
   assert(returned.state.alias === returnedImage, "duplicate final state image references should share one resource object");
   same(returned.results[1].shot, returned.results[0].image, "scenario state step should still expose the internal image handle");
   const returnedOcr = await ocr({ image: returnedImage });
-  assert(returnedOcr?.text?.replace(/\s+/g, " ").toUpperCase().includes("IMAGE MARKER 7391"), "OCR could not consume returned PNG image resource");
+  assert(returnedOcr?.text?.replace(/\s+/g, " ").toUpperCase().includes("IMAGE MARKER 7391"), "OCR could not consume returned WebP image resource");
+
+  const scaled = await run([
+    { screenshot: { window: { wid: root.wid }, scale: "50%" } },
+    { state: { shot: "$.ret.image" } },
+    { ocr: { image: "$.state.shot" } },
+  ]);
+  const scaledImage = scaled.state.shot;
+  same(scaled.results[0].scale, .5, "screenshot scale was not normalized");
+  same(scaledImage.scale, .5, "returned image scale missing");
+  const scaledRaw = await decodeImage(
+    scaledImage.data,
+    scaledImage.rect,
+    scaledImage.grayscale,
+    scaledImage.format,
+  );
+  assert(Math.abs(scaledRaw.rect.width - returnedImage.rect.width * .5) <= 1, "scaled image width is not 50%");
+  assert(Math.abs(scaledRaw.rect.height - returnedImage.rect.height * .5) <= 1, "scaled image height is not 50%");
+  assert(scaled.results[2]?.text?.replace(/\s+/g, " ").toUpperCase().includes("IMAGE MARKER 7391"), "scaled output preference affected in-run OCR");
+
+  const returnedPng = (await run([
+    { screenshot: { window: { wid: root.wid }, format: "png" } },
+    { state: { shot: "$.ret.image" } },
+  ])).state.shot;
+  assert(returnedPng?.format === "png" && returnedPng.data instanceof Uint8Array, "run final state ignored explicit PNG format");
+  same(returnedPng.scale, 1, "explicit PNG changed default image scale");
+  assert(returnedPng.data[0] === 0x89 && new TextDecoder().decode(returnedPng.data.subarray(1, 4)) === "PNG", "returned PNG signature missing");
+  same((await run([{ screenshot: { window: { wid: root.wid }, scale: "101%" } }])).results[0]?.error, "invalid image scale", "invalid screenshot scale should be diagnosed");
 
   const diagnostics = (await run([
     { window_find: { window: { wid: "$.state.missing" }, limit: 1 } },

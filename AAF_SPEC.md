@@ -701,8 +701,15 @@ immediately._
 - `grayscale` — when `true`, convert the retained image to grayscale.
 - `save` — optional destination path for immediately saving the newly captured
   resource.
-- `format` — optional `webp | png`. WebP is the default; when omitted, a `.png`
-  or `.webp` `save` extension selects that codec naturally.
+- `format` — optional `webp | png`. WebP is the default. This codec is used for
+  immediate `save` output and, if the image is retained in final scenario state,
+  for the binary image materialized by `run()`. When omitted, a `.png` or
+  `.webp` `save` extension selects that codec naturally.
+- `scale` — optional output scale, default `100%`. Use a percentage string such
+  as `50%`, or a numeric ratio such as `0.5`. Values may only reduce the image
+  (`0 < scale <= 100%`); aspect ratio is always preserved. Scaling applies only
+  while encoding saved/final output, never to the run-scoped raw image used by
+  OCR, matching, waits, or other image operations.
 
 ```yaml
 - screenshot:
@@ -712,14 +719,21 @@ immediately._
       width: "80%WC"
       height: "80%WC"
     save: "capture.webp"
+    scale: 50%
 ```
 
 **Action output**
+
+`rect` is always the resolved capture rectangle in absolute desktop/screen
+coordinates. Input `window`, `display`, anchors, relative offsets, and geometry
+suffixes affect how the capture is selected, never the coordinate system of the
+returned rectangle.
 
 ```yaml
 image: "opaque-resource-id"
 rect: { x: 260, y: 180, width: 900, height: 500 }
 grayscale: false
+scale: 0.5
 path: "capture.webp" # only when save was used
 bytes: 42871 # only when save was used
 format: webp # only when save was used
@@ -784,6 +798,8 @@ _Save a retained image resource without recapturing the screen._
 - `save` — destination path.
 - `format` — optional `webp | png`. WebP is the default; when omitted, a `.png`
   or `.webp` `save` extension selects that codec naturally.
+- `scale` — optional output scale using the same syntax as `screenshot.scale`.
+  When omitted, the retained resource's screenshot scale is reused.
 
 ```yaml
 - screenshot_save:
@@ -793,7 +809,7 @@ _Save a retained image resource without recapturing the screen._
 
 **Action output**
 
-`{image, path, bytes, format, rect, grayscale}` when the retained resource is
+`{image, path, bytes, format, rect, grayscale, scale}` when the retained resource is
 available. Inside `run()`, an unavailable/stale resource is reported through the
 scenario diagnostic result described under [`run()`](#run).
 
@@ -1482,18 +1498,27 @@ string containing the old handle no longer resolves to an image resource.
 When `run()` returns, every image still referenced by the **final** state is
 materialized into `run().state` and ownership of that image value passes to the
 caller. The current Deno backend keeps BGRA8 raw while the scenario is active,
-then normally encodes final-state images once as lossless PNG:
-`{format: "png", rect, grayscale, data: Uint8Array}`. This keeps OCR/matching on
-the fast raw path during execution while making retained caller-owned images
-much smaller. Final-state compaction is best-effort: if PNG encoding itself is
-unavailable, the caller receives the equivalent raw BGRA8 image rather than
-losing the state or failing the whole run. If the same handle appears at several
-state paths, those paths share the same materialized image object.
+then encodes each final-state image once using the screenshot codec and scale,
+WebP at `100%` by default:
+`{format: "webp", rect, grayscale, scale: 1, data: Uint8Array}`. Explicit
+`format: png` instead returns PNG, while `scale: 50%` returns an image whose
+encoded width and height are half the source dimensions. `rect` remains the
+original screen-space capture rectangle and `scale` is the normalized ratio, so
+a transport layer can map coordinates from a reduced image back to the desktop.
+A `save` extension also selects the codec when `format` is omitted. This keeps
+OCR/matching on the full-resolution raw path during execution while making
+retained caller-owned images compact for transport. If a materialized scaled
+image is later passed back to a separate direct `ocr({image})` call, that new
+call naturally operates on the already scaled image bytes.
+Final-state compaction is best-effort: if encoding itself is unavailable, the
+caller receives the equivalent raw BGRA8 image rather than losing the state or
+failing the whole run. If the same handle appears at several state paths, those
+paths share the same materialized image object.
 
-Direct `ocr({image})` accepts these returned PNG image resources and decodes
-them back to BGRA8 on demand. Resources not referenced by the final state are
-released when the run ends. The opaque handle strings themselves are never valid
-across runs and are not the caller-facing image representation. Per-action
+Direct `ocr({image})` accepts these returned WebP or PNG image resources and
+decodes them back to BGRA8 on demand. Resources not referenced by the final
+state are released when the run ends. The opaque handle strings themselves are
+never valid across runs and are not the caller-facing image representation. Per-action
 `results` remain JSON-compatible; the final returned `state` may contain
 host-native binary resource values.
 

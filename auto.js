@@ -136,13 +136,25 @@ export async function wait(options = 0) {
   }
 }
 
-async function saveImage(image, path, format) {
+function imageScale(value) {
+  if (value == null) return 1;
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value > 0 && value <= 1 ? value : null;
+  }
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)%$/);
+  if (!match) return null;
+  const scale = Number(match[1]) / 100;
+  return scale > 0 && scale <= 1 ? scale : null;
+}
+
+async function saveImage(image, path, format, scale = 1) {
   if (!path) return {};
   const codec = imageCodec(format, path);
   if (!codec) return {};
-  const bytes = encodeImage(image, codec);
+  const bytes = encodeImage(image, codec, scale);
   await Deno.writeFile(path, bytes);
-  return { path, bytes: bytes.length, format: codec };
+  return { path, bytes: bytes.length, format: codec, scale };
 }
 
 function resourceRefs(value, resources, found = new Set()) {
@@ -155,8 +167,14 @@ function resourceRefs(value, resources, found = new Set()) {
   return found;
 }
 
-function imageResult(id, image, saved = {}) {
-  return { image: id, rect: image.rect, grayscale: image.grayscale, ...saved };
+function imageResult(id, image, scale = 1, saved = {}) {
+  return {
+    image: id,
+    rect: image.rect,
+    grayscale: image.grayscale,
+    scale,
+    ...saved,
+  };
 }
 
 function collectScenarioResources(resources, context) {
@@ -171,13 +189,21 @@ async function scenarioScreenshot(options, resources) {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     return null;
   }
-  const { save, format, ...capture } = options;
+  const { save, format, scale, ...capture } = options;
+  const outputScale = imageScale(scale);
+  if (outputScale == null) scenarioFail("invalid image scale", { scale });
   const image = backend.captureScreenshot(capture);
   if (!image) return null;
   const id = crypto.randomUUID();
-  resources.set(id, image);
+  const outputFormat = imageCodec(format, save) ?? "webp";
+  resources.set(id, { image, outputFormat, outputScale });
   try {
-    return imageResult(id, image, await saveImage(image, save, format));
+    return imageResult(
+      id,
+      image,
+      outputScale,
+      await saveImage(image, save, format, outputScale),
+    );
   } catch (error) {
     resources.delete(id);
     throw error;
@@ -188,11 +214,18 @@ async function scenarioScreenshotSave(options, resources, state) {
   if (!options || typeof options !== "object" || Array.isArray(options)) {
     return null;
   }
-  const { image: id, save, format } = options;
+  const { image: id, save, format, scale } = options;
   if (!save || !resourceRefs(state, resources).has(id)) return null;
-  const image = resources.get(id);
-  if (!image) return null;
-  return imageResult(id, image, await saveImage(image, save, format));
+  const resource = resources.get(id);
+  if (!resource) return null;
+  const outputScale = scale == null ? resource.outputScale : imageScale(scale);
+  if (outputScale == null) scenarioFail("invalid image scale", { scale });
+  return imageResult(
+    id,
+    resource.image,
+    outputScale,
+    await saveImage(resource.image, save, format, outputScale),
+  );
 }
 
 function scenarioFail(error, details = {}) {
@@ -213,11 +246,11 @@ function resolveActionResources(name, value, resources) {
     name !== "ocr" || !value || typeof value !== "object" ||
     typeof value.image !== "string"
   ) return value;
-  const image = resources.get(value.image);
-  if (!image) {
+  const resource = resources.get(value.image);
+  if (!resource) {
     scenarioFail("image resource unavailable", { image: value.image });
   }
-  return { ...value, image };
+  return { ...value, image: resource.image };
 }
 
 const ACTIONS = { ...backend, ocr, wait };
@@ -370,24 +403,29 @@ function applyStatePatch(root, patch, context, prefix = []) {
   }
 }
 
-async function outputImage(image) {
+async function outputImage(resource) {
   try {
     return {
-      rect: image.rect,
-      format: "png",
-      grayscale: image.grayscale,
-      data: encodeImage(image, "png"),
+      rect: resource.image.rect,
+      format: resource.outputFormat,
+      grayscale: resource.image.grayscale,
+      scale: resource.outputScale,
+      data: encodeImage(
+        resource.image,
+        resource.outputFormat,
+        resource.outputScale,
+      ),
     };
   } catch {
-    return image;
+    return resource.image;
   }
 }
 
 async function scenarioOutputState(value, resources, images = new Map()) {
   if (typeof value === "string") {
-    const image = resources.get(value);
-    if (!image) return value;
-    if (!images.has(value)) images.set(value, outputImage(image));
+    const resource = resources.get(value);
+    if (!resource) return value;
+    if (!images.has(value)) images.set(value, outputImage(resource));
     return images.get(value);
   }
   if (!value || typeof value !== "object") return value;

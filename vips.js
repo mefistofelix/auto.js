@@ -62,7 +62,7 @@ let vips;
 
 function loadVips() {
   if (vips) return vips;
-  const require = createRequire(import.meta.resolve("npm:sharp"));
+  const require = createRequire(createRequire(import.meta.url).resolve("sharp"));
   const platform = require("./libvips.cjs").runtimePlatformArch();
   const dependencies = require("../package.json").optionalDependencies;
   const find = (subpath) => {

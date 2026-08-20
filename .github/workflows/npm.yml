@@ -19,9 +19,7 @@ jobs:
           git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
           git fetch origin --depth=1 "$GITHUB_SHA"
           git checkout "$GITHUB_SHA"
-      - env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
+      - run: |
           cp auto.js auto_win.js auto_darwin.js auto_linux.js vips.js AAF_SPEC.md README.md npm/
 
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
@@ -30,7 +28,4 @@ jobs:
           fi
 
           npx --yes npm@11 pack ./npm --dry-run
-          if [ -n "$NPM_TOKEN" ]; then
-            printf '//registry.npmjs.org/:_authToken=%s\n' "$NPM_TOKEN" > "$HOME/.npmrc"
-          fi
           npx --yes npm@11 publish ./npm --provenance --access public

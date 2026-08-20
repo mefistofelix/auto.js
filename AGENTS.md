@@ -470,15 +470,12 @@ npm publishing is intentionally source-only. `npm/package.json` exports
 runtime files, AAF specification, and README into `npm/`, then publishes that
 directory. There is no build/transpile step and no package manifest in the
 repository root. `.github/workflows/npm.yml` publishes with npm Trusted
-Publishing/OIDC and provenance once the package has a trusted publisher
-configured. The published package name is `@mefistofelix/auto.js`; the unscoped
-`auto.js` name is rejected by npm as too similar to the existing `autojs`
-package. Because npm cannot configure a trusted publisher before a package
-exists, the same workflow may use the `NPM_TOKEN` repository secret only for the
-initial bootstrap publication; remove that secret after configuring the trusted
-publisher for package `@mefistofelix/auto.js`, repository
-`mefistofelix/auto.js`, and `npm.yml`. Version tags matching `v*` publish through
-the workflow, and `workflow_dispatch` remains available for explicit reruns.
+Publishing/OIDC and provenance. The trusted publisher for package
+`@mefistofelix/auto.js` is repository `mefistofelix/auto.js`, workflow
+`npm.yml`; no npm token or `.npmrc` is used after the initial bootstrap publish.
+The unscoped `auto.js` name is rejected by npm as too similar to the existing
+`autojs` package. Version tags matching `v*` publish through the workflow, and
+`workflow_dispatch` remains available for explicit reruns.
 
 ## Displays and coordinates
 

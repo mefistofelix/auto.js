@@ -1,10 +1,11 @@
-// auto.js — Windows desktop automation for Deno.
-// Current target: Windows x64 + Deno. Native OS APIs only.
-if (Deno.build.os !== "windows" || Deno.build.arch !== "x86_64") {
+import { runtime } from "./runtime.js";
+
+// Windows x64 desktop automation through native OS APIs.
+if (runtime.build.os !== "windows" || runtime.build.arch !== "x86_64") {
   throw new Error("auto.js currently supports Windows x64 only");
 }
 
-const user32 = Deno.dlopen("user32.dll", {
+const user32 = runtime.dlopen("user32.dll", {
   EnumWindows: { parameters: ["pointer", "pointer"], result: "i32" },
   EnumChildWindows: {
     parameters: ["pointer", "pointer", "pointer"],
@@ -101,7 +102,7 @@ const user32 = Deno.dlopen("user32.dll", {
   SetClipboardData: { parameters: ["u32", "pointer"], result: "pointer" },
   IsClipboardFormatAvailable: { parameters: ["u32"], result: "i32" },
 });
-const kernel32 = Deno.dlopen("kernel32.dll", {
+const kernel32 = runtime.dlopen("kernel32.dll", {
   OpenProcess: { parameters: ["u32", "i32", "u32"], result: "pointer" },
   QueryFullProcessImageNameW: {
     parameters: ["pointer", "u32", "buffer", "buffer"],
@@ -116,7 +117,7 @@ const kernel32 = Deno.dlopen("kernel32.dll", {
   GetModuleHandleW: { parameters: ["pointer"], result: "pointer" },
   SetThreadExecutionState: { parameters: ["u32"], result: "u32" },
 });
-const gdi32 = Deno.dlopen("gdi32.dll", {
+const gdi32 = runtime.dlopen("gdi32.dll", {
   CreateCompatibleDC: { parameters: ["pointer"], result: "pointer" },
   DeleteDC: { parameters: ["pointer"], result: "i32" },
   CreateDIBSection: {
@@ -141,24 +142,24 @@ const gdi32 = Deno.dlopen("gdi32.dll", {
     result: "i32",
   },
 });
-const ntdll = Deno.dlopen("ntdll.dll", {
+const ntdll = runtime.dlopen("ntdll.dll", {
   RtlMoveMemory: { parameters: ["pointer", "buffer", "usize"], result: "void" },
 });
-const wtsapi32 = Deno.dlopen("wtsapi32.dll", {
+const wtsapi32 = runtime.dlopen("wtsapi32.dll", {
   WTSQuerySessionInformationW: {
     parameters: ["pointer", "u32", "u32", "buffer", "buffer"],
     result: "i32",
   },
   WTSFreeMemory: { parameters: ["pointer"], result: "void" },
 });
-const ole32 = Deno.dlopen("ole32.dll", {
+const ole32 = runtime.dlopen("ole32.dll", {
   CoInitializeEx: { parameters: ["pointer", "u32"], result: "i32" },
   CoCreateInstance: {
     parameters: ["buffer", "pointer", "u32", "buffer", "buffer"],
     result: "i32",
   },
 });
-const oleaut32 = Deno.dlopen("oleaut32.dll", {
+const oleaut32 = runtime.dlopen("oleaut32.dll", {
   SysAllocString: { parameters: ["buffer"], result: "pointer" },
   SysStringLen: { parameters: ["pointer"], result: "u32" },
   SysFreeString: { parameters: ["pointer"], result: "void" },
@@ -175,7 +176,7 @@ const oleaut32 = Deno.dlopen("oleaut32.dll", {
   SafeArrayDestroy: { parameters: ["pointer"], result: "i32" },
   VariantClear: { parameters: ["buffer"], result: "i32" },
 });
-const combase = Deno.dlopen("combase.dll", {
+const combase = runtime.dlopen("combase.dll", {
   RoInitialize: { parameters: ["u32"], result: "i32" },
   RoGetActivationFactory: {
     parameters: ["pointer", "buffer", "buffer"],
@@ -191,7 +192,7 @@ const combase = Deno.dlopen("combase.dll", {
     result: "pointer",
   },
 });
-const shcore = Deno.dlopen("shcore.dll", {
+const shcore = runtime.dlopen("shcore.dll", {
   GetScaleFactorForMonitor: {
     parameters: ["pointer", "buffer"],
     result: "i32",
@@ -347,7 +348,7 @@ export async function wait(options = 0) {
 }
 
 function ptrValue(pointer) {
-  return pointer ? Deno.UnsafePointer.value(pointer) : 0n;
+  return pointer ? runtime.UnsafePointer.value(pointer) : 0n;
 }
 
 function ptrId(pointer) {
@@ -355,7 +356,7 @@ function ptrId(pointer) {
 }
 
 function asPointer(value) {
-  return value ? Deno.UnsafePointer.create(BigInt(value)) : null;
+  return value ? runtime.UnsafePointer.create(BigInt(value)) : null;
 }
 
 function wide(text, nul = false) {
@@ -428,7 +429,7 @@ function monitorScale(monitor) {
 
 function displayRecords() {
   const found = [],
-    callback = new Deno.UnsafeCallback({
+    callback = new runtime.UnsafeCallback({
       parameters: ["pointer", "pointer", "pointer", "pointer"],
       result: "i32",
     }, (monitor) => {
@@ -719,7 +720,7 @@ function deepWindowFilter(filter) {
 
 function enumWindowHandles(parents) {
   const found = [], top = parents == null;
-  const callback = new Deno.UnsafeCallback({
+  const callback = new runtime.UnsafeCallback({
     parameters: ["pointer", "pointer"],
     result: "i32",
   }, (hwnd) => {
@@ -797,7 +798,7 @@ function windowMessageText(hwnd) {
       hwnd,
       WM_GETTEXT,
       BigInt(buffer.length),
-      Deno.UnsafePointer.of(buffer),
+      runtime.UnsafePointer.of(buffer),
     );
   return written == null
     ? null
@@ -874,7 +875,12 @@ export function input_sel(options = {}) {
   if (!hwnd || !textControl(hwnd)) return null;
   if (write) {
     const text = String(options.write ?? ""), data = wide(text, true);
-    return sendMessage(hwnd, EM_REPLACESEL, 1n, Deno.UnsafePointer.of(data)) ==
+    return sendMessage(
+        hwnd,
+        EM_REPLACESEL,
+        1n,
+        runtime.UnsafePointer.of(data),
+      ) ==
         null
       ? null
       : { length: text.length };
@@ -898,8 +904,8 @@ export function input_sel(options = {}) {
     !user32.symbols.SendMessageTimeoutW(
       hwnd,
       EM_GETSEL,
-      ptrValue(Deno.UnsafePointer.of(start)),
-      Deno.UnsafePointer.of(end),
+      ptrValue(runtime.UnsafePointer.of(start)),
+      runtime.UnsafePointer.of(end),
       3,
       250,
       out,
@@ -937,7 +943,7 @@ function sessionLocked() {
   try {
     const data = bytes[0] >= 20 &&
       new DataView(
-        new Deno.UnsafePointerView(pointer).getArrayBuffer(bytes[0]),
+        new runtime.UnsafePointerView(pointer).getArrayBuffer(bytes[0]),
       );
     if (!data || data.getUint32(0, true) !== 1) return null;
     const state = data.getInt32(16, true);
@@ -1044,7 +1050,7 @@ const WINDOW_FRAMES = {
 };
 function setWindowTitle(hwnd, title) {
   const text = wide(String(title), true);
-  sendMessage(hwnd, WM_SETTEXT, 0n, Deno.UnsafePointer.of(text));
+  sendMessage(hwnd, WM_SETTEXT, 0n, runtime.UnsafePointer.of(text));
 }
 
 function setWindowFrame(hwnd, frame) {
@@ -1070,7 +1076,7 @@ function setWindowFrame(hwnd, frame) {
 function setWindowTopmost(hwnd, value) {
   user32.symbols.SetWindowPos(
     hwnd,
-    Deno.UnsafePointer.create(
+    runtime.UnsafePointer.create(
       value ? 0xffffffffffffffffn : 0xfffffffffffffffen,
     ),
     0,
@@ -1134,7 +1140,7 @@ function ensureHighlightClass() {
   if (!instance) throw new Error("GetModuleHandleW failed");
   highlightBrush ??= gdi32.symbols.CreateSolidBrush(255);
   if (!highlightBrush) throw new Error("CreateSolidBrush failed");
-  highlightWndProc ??= new Deno.UnsafeCallback(
+  highlightWndProc ??= new runtime.UnsafeCallback(
     { parameters: ["pointer", "u32", "usize", "isize"], result: "isize" },
     (hwnd, message, wParam, lParam) =>
       message === 0x84
@@ -1148,7 +1154,7 @@ function ensureHighlightClass() {
   view.setBigUint64(8, ptrValue(highlightWndProc.pointer), true);
   view.setBigUint64(24, ptrValue(instance), true);
   view.setBigUint64(48, ptrValue(highlightBrush), true);
-  view.setBigUint64(64, ptrValue(Deno.UnsafePointer.of(name)), true);
+  view.setBigUint64(64, ptrValue(runtime.UnsafePointer.of(name)), true);
   if (!(highlightClass = user32.symbols.RegisterClassExW(wc))) {
     throw new Error("RegisterClassExW(highlight) failed");
   }
@@ -1306,7 +1312,7 @@ export function captureScreenshot(options = {}) {
     }
     if (!ok) throw new Error("Screenshot capture failed");
     let data = new Uint8Array(
-      new Deno.UnsafePointerView(asPointer(bits[0])).getArrayBuffer(
+      new runtime.UnsafePointerView(asPointer(bits[0])).getArrayBuffer(
         width * height * 4,
       ),
     ).slice();
@@ -1980,7 +1986,7 @@ function clipboardRead() {
     const handle = user32.symbols.GetClipboardData(CF_UNICODETEXT);
     return handle
       ? withGlobal(handle, (pointer) => {
-        const view = new Deno.UnsafePointerView(pointer);
+        const view = new runtime.UnsafePointerView(pointer);
         let length = 0;
         while (view.getUint16(length * 2)) length++;
         return textDecoder16.decode(
@@ -2070,11 +2076,11 @@ function checkHR(hr, label) {
 }
 
 function comCall(object, index, result, parameters = [], args = []) {
-  const vtable = new Deno.UnsafePointerView(object).getPointer(0);
-  const pointer = new Deno.UnsafePointerView(vtable).getPointer(
+  const vtable = new runtime.UnsafePointerView(object).getPointer(0);
+  const pointer = new runtime.UnsafePointerView(vtable).getPointer(
     index * POINTER_SIZE,
   );
-  const fn = new Deno.UnsafeFnPointer(pointer, {
+  const fn = new runtime.UnsafeFnPointer(pointer, {
     parameters: ["pointer", ...parameters],
     result,
   });
@@ -2219,7 +2225,7 @@ function bstrText(p) {
   const n = p ? oleaut32.symbols.SysStringLen(p) : 0;
   return n
     ? textDecoder16.decode(
-      new Uint8Array(new Deno.UnsafePointerView(p).getArrayBuffer(n * 2)),
+      new Uint8Array(new runtime.UnsafePointerView(p).getArrayBuffer(n * 2)),
     )
     : "";
 }
@@ -2267,7 +2273,7 @@ function uiaRuntimeId(e) {
     accessed = true;
     return [
       ...new Int32Array(
-        new Deno.UnsafePointerView(asPointer(data[0])).getArrayBuffer(
+        new runtime.UnsafePointerView(asPointer(data[0])).getArrayBuffer(
           count * 4,
         ),
       ),
@@ -2593,7 +2599,7 @@ function hstringText(hstring, free = true) {
     return p && length[0]
       ? textDecoder16.decode(
         new Uint8Array(
-          new Deno.UnsafePointerView(p).getArrayBuffer(length[0] * 2),
+          new runtime.UnsafePointerView(p).getArrayBuffer(length[0] * 2),
         ),
       )
       : "";

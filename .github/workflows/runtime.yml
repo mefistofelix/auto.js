@@ -1,0 +1,31 @@
+name: runtime
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: |
+          git init
+          git remote add origin "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          git fetch origin --depth=1 "$GITHUB_SHA"
+          git checkout "$GITHUB_SHA"
+      - run: |
+          curl -fsSL https://bun.sh/install | bash -s "bun-v1.4.3"
+          curl -fsSL https://deno.land/install.sh | sh -s v2.9.7
+          stage="$RUNNER_TEMP/autojs"
+          mkdir -p "$stage/examples"
+          cp *.js "$stage/"
+          cp npm/package.json "$stage/"
+          cp examples/runtime.js "$stage/examples/"
+          "$HOME/.bun/bin/bun" install --cwd "$stage" --ignore-scripts
+          "$HOME/.bun/bin/bun" "$stage/examples/runtime.js"
+          "$HOME/.deno/bin/deno" run -A examples/runtime.js

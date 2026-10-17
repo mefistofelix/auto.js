@@ -1,4 +1,6 @@
-if (Deno.build.os !== "darwin") {
+import { runtime } from "./runtime.js";
+
+if (runtime.build.os !== "darwin") {
   throw new Error("auto_darwin.js requires macOS");
 }
 
@@ -17,7 +19,7 @@ const CG_SCROLL_DELTA_AXIS_1 = 11;
 const CG_SCROLL_DELTA_AXIS_2 = 12;
 const IOPM_ASSERTION_ON = 255;
 
-const coreFoundation = Deno.dlopen(
+const coreFoundation = runtime.dlopen(
   "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
   {
     CFRelease: { parameters: ["pointer"], result: "void" },
@@ -60,7 +62,7 @@ const coreFoundation = Deno.dlopen(
   },
 );
 
-const coreGraphics = Deno.dlopen(
+const coreGraphics = runtime.dlopen(
   "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
   {
     CGGetActiveDisplayList: {
@@ -142,7 +144,7 @@ const coreGraphics = Deno.dlopen(
   },
 );
 
-const applicationServices = Deno.dlopen(
+const applicationServices = runtime.dlopen(
   "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices",
   {
     AXIsProcessTrusted: { parameters: [], result: "u8" },
@@ -182,19 +184,19 @@ const applicationServices = Deno.dlopen(
   },
 );
 
-const libproc = Deno.dlopen("/usr/lib/libproc.dylib", {
+const libproc = runtime.dlopen("/usr/lib/libproc.dylib", {
   proc_pidpath: {
     parameters: ["i32", "buffer", "u32"],
     result: "i32",
   },
 });
 
-const appKit = Deno.dlopen(
+const appKit = runtime.dlopen(
   "/System/Library/Frameworks/AppKit.framework/AppKit",
   { NSPasteboardTypeString: { type: "pointer" } },
 );
 
-const vision = Deno.dlopen(
+const vision = runtime.dlopen(
   "/System/Library/Frameworks/Vision.framework/Vision",
   {
     VNImageRectForNormalizedRect: {
@@ -204,7 +206,7 @@ const vision = Deno.dlopen(
   },
 );
 
-const objc = Deno.dlopen("/usr/lib/libobjc.A.dylib", {
+const objc = runtime.dlopen("/usr/lib/libobjc.A.dylib", {
   objc_getClass: { parameters: ["buffer"], result: "pointer" },
   sel_registerName: { parameters: ["buffer"], result: "pointer" },
   msg0: {
@@ -254,7 +256,7 @@ const objc = Deno.dlopen("/usr/lib/libobjc.A.dylib", {
   },
 });
 
-const iokit = Deno.dlopen(
+const iokit = runtime.dlopen(
   "/System/Library/Frameworks/IOKit.framework/IOKit",
   {
     IOPMAssertionCreateWithName: {
@@ -284,7 +286,7 @@ function cString(text) {
 }
 
 function asPointer(value) {
-  return value ? Deno.UnsafePointer.create(BigInt(value)) : null;
+  return value ? runtime.UnsafePointer.create(BigInt(value)) : null;
 }
 
 function cfRelease(value) {
@@ -396,7 +398,7 @@ function displayRecords() {
     coreGraphics.symbols.CGGetActiveDisplayList(
         0,
         null,
-        Deno.UnsafePointer.of(count),
+        runtime.UnsafePointer.of(count),
       ) !== 0 || !count[0]
   ) return [];
 
@@ -404,8 +406,8 @@ function displayRecords() {
   if (
     coreGraphics.symbols.CGGetActiveDisplayList(
       ids.length,
-      Deno.UnsafePointer.of(ids),
-      Deno.UnsafePointer.of(count),
+      runtime.UnsafePointer.of(ids),
+      runtime.UnsafePointer.of(count),
     ) !== 0
   ) return [];
 
@@ -769,7 +771,7 @@ function axValue(element, name, type, length) {
     return applicationServices.symbols.AXValueGetValue(
         value,
         type,
-        Deno.UnsafePointer.of(out),
+        runtime.UnsafePointer.of(out),
       )
       ? [...out]
       : null;
@@ -789,7 +791,7 @@ function axSetPoint(element, name, type, values) {
   return cfUse(
     applicationServices.symbols.AXValueCreate(
       type,
-      Deno.UnsafePointer.of(data),
+      runtime.UnsafePointer.of(data),
     ),
     (value) => axSet(element, name, value),
   ) ?? false;
@@ -1961,7 +1963,7 @@ export function input_sel(options = {}) {
     ]);
     const value = applicationServices.symbols.AXValueCreate(
       4,
-      Deno.UnsafePointer.of(data),
+      runtime.UnsafePointer.of(data),
     );
     return cfUse(
       value,
@@ -2200,7 +2202,7 @@ function visionText(image) {
       ? objc.symbols.msg0(arrayType, objcSelector("alloc"))
       : null;
     const requestPointer = request
-      ? new BigUint64Array([Deno.UnsafePointer.value(request)])
+      ? new BigUint64Array([runtime.UnsafePointer.value(request)])
       : null;
     const requests = arrayObject && requestPointer
       ? objc.symbols.msg2pu(
@@ -2225,7 +2227,7 @@ function visionText(image) {
           handler,
           objcSelector("performRequests:error:"),
           requests,
-          Deno.UnsafePointer.of(error),
+          runtime.UnsafePointer.of(error),
         )
       ) return null;
 

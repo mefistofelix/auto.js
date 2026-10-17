@@ -1,4 +1,6 @@
-if (Deno.build.os !== "linux") {
+import { runtime } from "./runtime.js";
+
+if (runtime.build.os !== "linux") {
   throw new Error("auto_linux.js requires Linux");
 }
 
@@ -7,7 +9,7 @@ const textDecoder = new TextDecoder();
 
 function env(name) {
   try {
-    return Deno.env.get(name);
+    return runtime.env.get(name);
   } catch {
     return undefined;
   }
@@ -19,7 +21,7 @@ const x11Session = !wayland && (sessionType === "x11" || !!env("DISPLAY"));
 
 function openLibrary(name, symbols) {
   try {
-    return Deno.dlopen(name, symbols);
+    return runtime.dlopen(name, symbols);
   } catch {
     return null;
   }
@@ -33,11 +35,11 @@ function cString(text) {
 }
 
 function pointer(value) {
-  return value ? Deno.UnsafePointer.create(BigInt(value)) : null;
+  return value ? runtime.UnsafePointer.create(BigInt(value)) : null;
 }
 
 function pointerValue(value) {
-  return value ? Deno.UnsafePointer.value(value) : 0n;
+  return value ? runtime.UnsafePointer.value(value) : 0n;
 }
 
 function pointerId(value) {
@@ -344,7 +346,7 @@ function xQueryChildren(window) {
   try {
     return [
       ...new BigUint64Array(
-        new Deno.UnsafePointerView(value).getArrayBuffer(count[0] * 8),
+        new runtime.UnsafePointerView(value).getArrayBuffer(count[0] * 8),
       ),
     ];
   } finally {
@@ -385,7 +387,7 @@ function xProperty(window, name) {
       format: format[0],
       count: Number(count[0]),
       data: new Uint8Array(
-        new Deno.UnsafePointerView(value).getArrayBuffer(size),
+        new runtime.UnsafePointerView(value).getArrayBuffer(size),
       ).slice(),
     };
   } finally {
@@ -418,7 +420,7 @@ function xTitle(window) {
   if (!xlib.symbols.XFetchName(xDisplay, window, out) || !out[0]) return "";
   const value = pointer(out[0]);
   try {
-    return new Deno.UnsafePointerView(value).getCString();
+    return new runtime.UnsafePointerView(value).getCString();
   } finally {
     xlib.symbols.XFree(value);
   }
@@ -432,9 +434,9 @@ function xClass(window) {
   const className = hint[1] ? pointer(hint[1]) : null;
   try {
     return className
-      ? new Deno.UnsafePointerView(className).getCString()
+      ? new runtime.UnsafePointerView(className).getCString()
       : name
-      ? new Deno.UnsafePointerView(name).getCString()
+      ? new runtime.UnsafePointerView(name).getCString()
       : "";
   } finally {
     if (name) xlib.symbols.XFree(name);
@@ -512,7 +514,7 @@ function xWindowRect(window) {
 function processPath(pid) {
   if (!pid) return "";
   try {
-    return Deno.readLinkSync(`/proc/${pid}/exe`);
+    return runtime.readLinkSync(`/proc/${pid}/exe`);
   } catch {
     return "";
   }
@@ -532,7 +534,7 @@ function displayRecords() {
     if (monitors && count[0] > 0) {
       try {
         const view = new DataView(
-          new Deno.UnsafePointerView(monitors).getArrayBuffer(count[0] * 56),
+          new runtime.UnsafePointerView(monitors).getArrayBuffer(count[0] * 56),
         );
         for (let i = 0; i < count[0]; i++) {
           const offset = i * 56;
@@ -1260,7 +1262,7 @@ function objectUse(value, fn) {
 function ownedText(value) {
   if (!value) return "";
   try {
-    return new Deno.UnsafePointerView(value).getCString();
+    return new runtime.UnsafePointerView(value).getCString();
   } finally {
     glib?.symbols.g_free(value);
   }
@@ -1313,7 +1315,7 @@ function atspiRect(element) {
     if (!rect) return null;
     try {
       const view = new DataView(
-        new Deno.UnsafePointerView(rect).getArrayBuffer(16),
+        new runtime.UnsafePointerView(rect).getArrayBuffer(16),
       );
       const result = {
         x: view.getInt32(0, true),
@@ -1647,7 +1649,7 @@ function textSelection(textIface, text) {
     if (range) {
       try {
         const view = new DataView(
-          new Deno.UnsafePointerView(range).getArrayBuffer(8),
+          new runtime.UnsafePointerView(range).getArrayBuffer(8),
         );
         const startChars = view.getInt32(0, true);
         const endChars = view.getInt32(4, true);
@@ -2159,9 +2161,9 @@ function captureArea(options = {}) {
 
 function destroyXImage(image) {
   if (!image) return;
-  const destroy = new Deno.UnsafePointerView(image).getPointer(96);
+  const destroy = new runtime.UnsafePointerView(image).getPointer(96);
   if (!destroy) return;
-  new Deno.UnsafeFnPointer(destroy, {
+  new runtime.UnsafeFnPointer(destroy, {
     parameters: ["pointer"],
     result: "i32",
   }).call(image);
@@ -2186,7 +2188,7 @@ function maskChannel(pixel, mask) {
 }
 
 function xImageBGRA(image, width, height) {
-  const view = new Deno.UnsafePointerView(image);
+  const view = new runtime.UnsafePointerView(image);
   const dataPointer = view.getPointer(16);
   if (!dataPointer) return null;
   const header = new DataView(view.getArrayBuffer(88));
@@ -2198,7 +2200,7 @@ function xImageBGRA(image, width, height) {
   const blueMask = Number(header.getBigUint64(72, true) & 0xffffffffn) >>> 0;
   if (bytesPerLine <= 0 || ![24, 32].includes(bitsPerPixel)) return null;
   const raw = new Uint8Array(
-    new Deno.UnsafePointerView(dataPointer).getArrayBuffer(
+    new runtime.UnsafePointerView(dataPointer).getArrayBuffer(
       bytesPerLine * height,
     ),
   );

@@ -1497,7 +1497,7 @@ string containing the old handle no longer resolves to an image resource.
 
 When `run()` returns, every image still referenced by the **final** state is
 materialized into `run().state` and ownership of that image value passes to the
-caller. The current Deno backend keeps BGRA8 raw while the scenario is active,
+caller. The current JavaScript implementation keeps BGRA8 raw while the scenario is active,
 then encodes each final-state image once using the screenshot codec and scale,
 WebP at `100%` by default:
 `{format: "webp", rect, grayscale, scale: 1, data: Uint8Array}`. Explicit

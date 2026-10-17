@@ -18,7 +18,8 @@ const STEP_DELAY = 1200;
 const pause = (label) => (console.log(`\n--- ${label} ---`), wait({ ms: STEP_DELAY }));
 const saveShot = async (options) => (await run([{ screenshot: options }])).results[0];
 const before = new Set(window_find({ window: { bin: "notepad\\.exe$", class: "^Notepad$" } }).map((w) => w.wid));
-new Deno.Command("notepad.exe").spawn();
+const { spawn } = await import("node:child_process");
+spawn("notepad.exe", [], { stdio: "ignore" });
 
 function focusTarget(win) {
   window_control({ window: { wid: win.wid }, action: "focus" });

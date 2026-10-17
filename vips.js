@@ -1,3 +1,5 @@
+import { runtime } from "./runtime.js";
+
 import { createRequire } from "node:module";
 
 if (false) await import("npm:sharp");
@@ -86,7 +88,7 @@ function resolveLib() {
 
 function loadVips() {
   if (library) return library;
-  library = Deno.dlopen(resolveLib(), VIPS_SYMBOLS);
+  library = runtime.dlopen(resolveLib(), VIPS_SYMBOLS);
   if (library.symbols.vips_init(cString("auto.js")) !== 0) {
     library.close();
     library = null;
@@ -200,7 +202,9 @@ export function encodeImage(
       const pointer = symbols.vips_value_get_blob(output, length);
       if (!pointer) throw new Error(`Could not encode ${codec}`);
       return new Uint8Array(
-        new Deno.UnsafePointerView(pointer).getArrayBuffer(Number(length[0])),
+        new runtime.UnsafePointerView(pointer).getArrayBuffer(
+          Number(length[0]),
+        ),
       ).slice();
     } finally {
       symbols.g_value_unset(output);
@@ -255,7 +259,9 @@ function decodeBytes(data, codec, rect = {}, grayscale = false) {
       if (!pointer || bands < 1) throw new Error(`Could not decode ${codec}`);
       try {
         const raw = new Uint8Array(
-          new Deno.UnsafePointerView(pointer).getArrayBuffer(Number(length[0])),
+          new runtime.UnsafePointerView(pointer).getArrayBuffer(
+            Number(length[0]),
+          ),
         );
         return {
           rect: { x: rect.x ?? 0, y: rect.y ?? 0, width, height },
@@ -302,7 +308,7 @@ export async function decodeImage(
   format,
 ) {
   const data = typeof source === "string"
-    ? await Deno.readFile(source)
+    ? await runtime.readFile(source)
     : source;
   const codec = typeof source === "string"
     ? imageCodec(format, source)

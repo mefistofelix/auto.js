@@ -2,11 +2,11 @@
 
 ## Purpose
 
-`auto.js` is a minimal desktop-automation library for Deno with small native
+`auto.js` is a minimal desktop-automation library for Deno and Bun with small native
 backends per operating system.
 
 The project keeps the common AAF/scenario core in **JavaScript** and uses **Deno
-FFI directly against operating-system APIs** in each backend. Windows uses Win32
+FFI or Bun FFI directly against operating-system APIs** in each backend. Windows uses Win32
 plus COM/WinRT; macOS uses CoreFoundation/CoreGraphics/ApplicationServices,
 AppKit, Vision and IOKit; Linux uses AT-SPI and, under X11,
 Xlib/EWMH/XRandR/XTest. PNG/WebP encode/decode is isolated in `vips.js`, which
@@ -20,10 +20,21 @@ native addon, a project-owned library, generated bindings, other npm
 dependencies, or a build step unless the project direction is explicitly
 changed.
 
+Bun uses its built-in YAML parser and resolves Sharp/Tesseract from the npm
+package's installed dependencies. Keep Deno's explicit `npm:` resolution and
+global cache unchanged. Bun's `Image` API currently lacks raw BGRA/RGBA pixel
+input/output; keep libvips lazy for the shared raw-image pipeline. Bun consumer
+installs are supported, but development and verification must not create local
+`node_modules` or lockfiles in this repository; stage Bun tests outside it.
+
 ## Repository shape
 
 Keep the runtime split flat and explicit:
 
+- `runtime.js` — the Deno/Bun host and native ABI boundary. It delegates directly
+  to Deno on Deno, uses `bun:ffi` on Bun, and uses macOS's system libffi only for
+  Quartz by-value structs that Bun FFI cannot represent. Preserve 64-bit Win32
+  handles, including pseudo-handles. Never install a global Deno shim.
 - `auto.js` — common public entry point, backend selection, AAF
   scenario/state/resource logic, shared image-policy boundary, and minimal
   `import.meta.main` YAML CLI. The CLI accepts exactly one file and delegates to

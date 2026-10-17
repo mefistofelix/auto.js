@@ -1,12 +1,12 @@
 # AutoJS
 
-AutoJS is a minimal desktop-automation library for **Deno** with native
+AutoJS is a minimal desktop-automation library for **Deno and Bun** with native
 operating-system backends.
 
 The common AAF/scenario core lives in `auto.js`; native operations live in small
-backend files using Deno FFI directly against the operating system. Windows uses
-Win32, COM, and WinRT. PNG/WebP encode/decode uses libvips directly through its
-C ABI and Deno FFI. `npm:sharp` is only a package-graph anchor and source of the
+backend files calling the operating system through Deno FFI or `bun:ffi`.
+Windows uses Win32, COM, and WinRT. PNG/WebP encode/decode uses libvips directly
+through its C ABI. Sharp is only a package-graph anchor and source of the
 platform libvips binaries; the Sharp native addon is never loaded. Tesseract.js
 is an optional lazy OCR provider loaded only when selected or needed by the
 Linux fallback; there is no project-owned native library or build step.
@@ -45,10 +45,15 @@ minimal CLI for YAML scenarios.
 - macOS for the Darwin backend
 - Linux with AT-SPI; X11 enables the current global window/input/screenshot
   surface
-- Deno
+- Deno, or Bun 1.4.3 or newer
 - network access on first resolution of `npm:sharp`; Tesseract OCR also needs
   first-use package/language-data resolution; direct CLI use resolves Deno's
   `@std/yaml` parser on first use
+
+Bun uses its built-in YAML parser. libvips is loaded only on the first image
+encode/decode, or when explicitly opened through `vips.lib`. Bun's `Image` API
+supports PNG/WebP but currently has no raw BGRA/RGBA input/output, so AutoJS
+continues to use libvips for its raw screenshot and matching pipeline.
 
 Run scripts with permissions sufficient for FFI, process creation, desktop
 input, and file access:
@@ -93,6 +98,23 @@ until they are exercised on those operating systems.
 
 ## Direct API
 
+With Bun, install the npm package in your application:
+
+```sh
+bun add @mefistofelix/auto.js
+```
+
+```js
+import { keyb, window_find } from "@mefistofelix/auto.js";
+
+console.log(window_find({ limit: 1 }));
+await keyb({ type: "Hello from Bun" });
+```
+
+Run your script with `bun script.js`. No native addon build or install script is
+required. `tesseract.js` is an optional npm dependency and is imported only when
+its OCR provider is used.
+
 From npm, Deno can import AutoJS directly without creating a local
 `node_modules` directory:
 
@@ -113,12 +135,16 @@ if (win) {
 ## libvips API
 
 AutoJS also exposes its small direct-libvips boundary as `vips`. This is useful
-when a Deno program wants the libvips binary bundled through Sharp's platform
-packages without loading Sharp's native addon, including from `deno compile`.
+when a Deno or Bun program wants the libvips binary bundled through Sharp's
+platform packages without loading Sharp's native addon, including from
+`deno compile`.
 
 `vips.lib` lazily resolves the platform-specific libvips shared-library path.
 Use that path with Deno's normal FFI API when you need libvips symbols beyond
 the small codec helpers exposed here.
+
+Bun callers can open the same `vips.lib` path with `dlopen` from `bun:ffi`,
+using Bun's `args` / `returns` signatures.
 
 ```js
 import { vips } from "npm:@mefistofelix/auto.js";
@@ -213,6 +239,10 @@ focuses it, types text, waits for OCR to observe that text, and saves
 deno run -A auto.js scenario.yaml
 ```
 
+With Bun, use `bun auto.js scenario.yaml` from the source checkout, or
+`bun node_modules/@mefistofelix/auto.js/auto.js scenario.yaml` after
+installation.
+
 There are no CLI commands or flags: exactly one YAML file is parsed and passed
 to `run()`, whose `{results, state}` value is written as JSON to stdout.
 Importing `auto.js` as a library does not enter the CLI path or load the YAML
@@ -248,10 +278,16 @@ deno run -A examples/suite.js
 `examples/notepad.js` is a second integration example against the real Windows
 Notepad application.
 
+The same suite runs with `bun examples/suite.js` after installing the package
+dependencies in a separate staging checkout. Windows x64 is runtime-tested with
+Deno 2.9.7 and Bun 1.4.3. macOS/Linux Bun paths are ABI-reviewed and statically
+checked, without equivalent runtime certification.
+
 ## Project structure
 
 ```text
 auto.js               common entry point and AAF runtime
+runtime.js            Deno/Bun native ABI and host-runtime compatibility
 auto_win.js           Windows native backend
 auto_darwin.js        macOS native backend
 auto_linux.js         Linux native backend
@@ -270,10 +306,10 @@ explicit per-scenario `prev`, `state`, and run-scoped resource lifetime, then
 returns `{results, state}` and transfers final-state image resources to the
 caller.
 
-`auto.js` selects the native backend from `Deno.build.os`. The backend boundary
-stays flat and functional: the same public actions are offered everywhere, but
-unsupported operating-system capabilities return no result instead of being
-emulated with misleading semantics.
+`auto.js` selects the native backend from the current runtime's operating
+system. The backend boundary stays flat and functional: the same public actions
+are offered everywhere, but unsupported operating-system capabilities return no
+result instead of being emulated with misleading semantics.
 
 ### Platform backends
 
@@ -303,11 +339,12 @@ injection remain unavailable until implemented through compositor-authorized
 mechanisms.
 
 OCR provider selection is common policy in `auto.js`: `native` delegates to the
-OS backend, `tesseract` lazily imports `npm:tesseract.js`, and `default` falls
-back to Tesseract automatically on Linux because Linux has no universal native
-OCR service comparable to WinRT or Vision. Tesseract needs no manifest,
-`node_modules`, npm install or subprocess, and stores its language cache outside
-the project directory.
+OS backend, `tesseract` lazily imports Tesseract.js, and `default` falls back to
+Tesseract automatically on Linux because Linux has no universal native OCR
+service comparable to WinRT or Vision. Under Deno, Tesseract needs no manifest,
+`node_modules`, npm install or subprocess. Bun resolves the optional installed
+dependency. Both store the language cache outside the project directory and
+terminate the worker per call.
 
 See the **Portability and backend capabilities** section of `AAF_SPEC.md` for
 the exact capability matrix and current verification status.

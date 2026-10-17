@@ -1,3 +1,5 @@
+import { runtime } from "./runtime.js";
+
 import { vips } from "./vips.js";
 
 export { vips };
@@ -13,10 +15,10 @@ const backendPath = {
   windows: "./auto_win.js",
   darwin: "./auto_darwin.js",
   linux: "./auto_linux.js",
-}[Deno.build.os];
+}[runtime.build.os];
 
 if (!backendPath) {
-  throw new Error(`auto.js does not support ${Deno.build.os}`);
+  throw new Error(`auto.js does not support ${runtime.build.os}`);
 }
 
 const backend = await import(backendPath);
@@ -66,19 +68,21 @@ async function nativeOcr(options) {
   return image ? backend.ocr({ ...options, image }) : null;
 }
 
-const TESSERACT_MODULE = "npm:" + "tesseract.js";
+const TESSERACT_MODULE = globalThis.Bun
+  ? "tesseract.js"
+  : "npm:" + "tesseract.js";
 
 function tesseractCachePath() {
   try {
-    const home = Deno.env.get("HOME");
-    const base = Deno.build.os === "windows"
-      ? Deno.env.get("LOCALAPPDATA")
-      : Deno.build.os === "darwin"
+    const home = runtime.env.get("HOME");
+    const base = runtime.build.os === "windows"
+      ? runtime.env.get("LOCALAPPDATA")
+      : runtime.build.os === "darwin"
       ? home && `${home}/Library/Caches`
-      : Deno.env.get("XDG_CACHE_HOME") ?? (home && `${home}/.cache`);
+      : runtime.env.get("XDG_CACHE_HOME") ?? (home && `${home}/.cache`);
     if (!base) return null;
     const path = `${base}/auto.js/tesseract`;
-    Deno.mkdirSync(path, { recursive: true });
+    runtime.mkdirSync(path, { recursive: true });
     return path;
   } catch {
     return null;
@@ -117,7 +121,8 @@ export async function ocr(options = {}) {
   if (provider !== "default") return null;
 
   const result = await nativeOcr(options);
-  return result ?? (Deno.build.os === "linux" ? tesseractOcr(options) : null);
+  return result ??
+    (runtime.build.os === "linux" ? tesseractOcr(options) : null);
 }
 
 export async function wait(options = 0) {
@@ -155,7 +160,7 @@ async function saveImage(image, path, format, scale = 1) {
   const codec = vips.imageCodec(format, path);
   if (!codec) return {};
   const bytes = vips.encodeImage(image, codec, scale);
-  await Deno.writeFile(path, bytes);
+  await runtime.writeFile(path, bytes);
   return { path, bytes: bytes.length, format: codec, scale };
 }
 
@@ -525,10 +530,14 @@ export async function run(actions = []) {
 }
 
 if (import.meta.main) {
-  if (Deno.args.length !== 1) {
-    throw new Error("usage: deno run -A auto.js <scenario.yaml>");
+  if (runtime.args.length !== 1) {
+    throw new Error(
+      "usage: deno run -A auto.js <scenario.yaml> | bun auto.js <scenario.yaml>",
+    );
   }
-  const { parse } = await import("jsr:" + "@std/yaml@1.2.0");
-  const actions = parse(await Deno.readTextFile(Deno.args[0]));
+  const parse = globalThis.Bun
+    ? Bun.YAML.parse
+    : (await import("jsr:" + "@std/yaml@1.2.0")).parse;
+  const actions = parse(await runtime.readTextFile(runtime.args[0]));
   console.log(JSON.stringify(await run(actions), null, 2));
 }

@@ -1,3 +1,10 @@
+import { runtime } from "../runtime.js";
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import process from "node:process";
+
 const FIXTURE_CLASS = "AAF.TestFixture";
 const OCR_TEXT = "AAF OCR TEST 48291";
 const BUTTON_TEXT = "CLICK";
@@ -11,7 +18,7 @@ function wide(text) {
 }
 
 function fixture(token) {
-  const user32 = Deno.dlopen("user32.dll", {
+  const user32 = runtime.dlopen("user32.dll", {
     RegisterClassExW: { parameters: ["buffer"], result: "u16" },
     CreateWindowExW: {
       parameters: ["u32", "buffer", "buffer", "u32", "i32", "i32", "i32", "i32", "pointer", "pointer", "pointer", "pointer"],
@@ -30,7 +37,7 @@ function fixture(token) {
     PostQuitMessage: { parameters: ["i32"], result: "void" },
     SetProcessDPIAware: { parameters: [], result: "i32" },
   });
-  const kernel32 = Deno.dlopen("kernel32.dll", {
+  const kernel32 = runtime.dlopen("kernel32.dll", {
     GetModuleHandleW: { parameters: ["pointer"], result: "pointer" },
   });
 
@@ -50,7 +57,7 @@ function fixture(token) {
   let edit = null;
   let status = null;
 
-  const wndProc = new Deno.UnsafeCallback(
+  const wndProc = new runtime.UnsafeCallback(
     { parameters: ["pointer", "u32", "usize", "isize"], result: "isize" },
     (hwnd, message, wParam, lParam) => {
       if (message === WM_COMMAND) {
@@ -74,10 +81,10 @@ function fixture(token) {
   const wc = new Uint8Array(80);
   const view = new DataView(wc.buffer);
   view.setUint32(0, 80, true);
-  view.setBigUint64(8, Deno.UnsafePointer.value(wndProc.pointer), true);
-  view.setBigUint64(24, Deno.UnsafePointer.value(instance), true);
+  view.setBigUint64(8, runtime.UnsafePointer.value(wndProc.pointer), true);
+  view.setBigUint64(24, runtime.UnsafePointer.value(instance), true);
   const className = wide(FIXTURE_CLASS);
-  view.setBigUint64(64, Deno.UnsafePointer.value(Deno.UnsafePointer.of(className)), true);
+  view.setBigUint64(64, runtime.UnsafePointer.value(runtime.UnsafePointer.of(className)), true);
   if (!user32.symbols.RegisterClassExW(wc)) throw new Error("fixture RegisterClassExW failed");
 
   const create = (className, title, style, x, y, width, height, parent, id = 0) => {
@@ -91,7 +98,7 @@ function fixture(token) {
       width,
       height,
       parent,
-      id ? Deno.UnsafePointer.create(BigInt(id)) : null,
+      id ? runtime.UnsafePointer.create(BigInt(id)) : null,
       instance,
       null,
     );
@@ -134,9 +141,9 @@ function fixture(token) {
   }
 }
 
-if (Deno.args[0] === "--fixture") {
-  fixture(Deno.args[1] ?? "fixture");
-  Deno.exit(0);
+if (runtime.args[0] === "--fixture") {
+  fixture(runtime.args[1] ?? "fixture");
+  process.exit(0);
 }
 
 const {
@@ -201,20 +208,30 @@ async function findFixture(pid) {
 }
 
 const token = crypto.randomUUID().slice(0, 8);
-const child = new Deno.Command(Deno.execPath(), {
-  args: ["run", "-A", import.meta.filename, "--fixture", token],
-  stdin: "null",
-  stdout: "null",
-  stderr: "inherit",
-}).spawn();
-const temp = await Deno.makeTempDir({ prefix: "aaf-suite-" });
+const child = spawn(process.execPath, [
+  ...(globalThis.Bun ? [] : ["run", "-A"]),
+  import.meta.filename, "--fixture", token,
+], { stdio: ["ignore", "ignore", "inherit"] });
+const temp = await mkdtemp(join(tmpdir(), "aaf-suite-"));
 const originalClipboard = clipboard({ read: true });
 const originalCursor = (await mouse_move({})).pos;
 let root = null;
 let awake = false;
 
 try {
-  const lib = Deno.dlopen(vips.lib, {
+  const kernel32 = runtime.dlopen("kernel32.dll", {
+    GetCurrentProcess: { parameters: [], result: "pointer" },
+    AAFMissingSymbol: { parameters: [], result: "void", optional: true },
+  });
+  try {
+    same(runtime.UnsafePointer.value(kernel32.symbols.GetCurrentProcess()), 0xffffffffffffffffn, "FFI pseudo-handle lost bits");
+    same(kernel32.symbols.AAFMissingSymbol, null, "optional FFI symbol must be null");
+  } finally {
+    kernel32.close();
+  }
+  check("FFI 64-bit handles and optional symbols");
+
+  const lib = runtime.dlopen(vips.lib, {
     vips_init: { parameters: ["buffer"], result: "i32" },
   });
   lib.close();
@@ -253,6 +270,7 @@ try {
   const nestedWindow = window_find({ window: { pid: child.pid, title: "^NESTED CHILD$", depth: "all" }, limit: 1 })[0];
   assert(buttonWindow && editWindow && statusWindow && nestedWindow, "fixture child windows not found");
   assert(root.client?.width > 0 && root.client?.height > 0, "window client rect missing");
+  root = window_get_prop({ window: { wid: root.wid } });
   assert(Number.isInteger(root.zorder) && root.zorder >= 0, "window zorder missing");
   same(window_find({ window: { wid: root.wid, zorder: root.zorder }, limit: 1 })[0]?.wid, root.wid, "window zorder filter failed");
   same(window_get_prop({ window: { wid: editWindow.wid }, text: true })?.text, EDIT_INITIAL, "window_get_prop edit text failed");
@@ -523,7 +541,7 @@ try {
   const defaultImage = `${temp}\\default-codec`;
   const defaultSaved = (await run([{ screenshot: { window: { wid: root.wid }, save: defaultImage } }])).results[0];
   same(defaultSaved?.format, "webp", "default screenshot codec must be WebP");
-  const defaultBytes = await Deno.readFile(defaultImage);
+  const defaultBytes = await readFile(defaultImage);
   same(new TextDecoder().decode(defaultBytes.subarray(0, 4)), "RIFF", "default WebP signature missing");
   const resolvedShot = (await run([{
     screenshot: {
@@ -614,8 +632,8 @@ try {
   assert(results[10]?.bytes > 0, "resource should survive one deleted state reference");
   same(results[12]?.error, "no result", "stale resource should return a diagnostic");
   same(results[12]?.action, "screenshot_save", "stale resource diagnostic should identify the action");
-  const bytes1 = await Deno.readFile(save1);
-  const bytes2 = await Deno.readFile(save2);
+  const bytes1 = await readFile(save1);
+  const bytes2 = await readFile(save2);
   same(bytes1.length, bytes2.length, "resource saves differ in size");
   assert(bytes1.every((value, index) => value === bytes2[index]), "screenshot_save recaptured or changed resource bytes");
   same(scenarioState.matched.title, scenarioTitle, "run final state missing scenario data");
@@ -710,7 +728,7 @@ try {
     // Cursor restoration is best effort.
   }
   try {
-    await Deno.remove(temp, { recursive: true });
+    await rm(temp, { recursive: true });
   } catch {
     // Temp cleanup is best effort.
   }

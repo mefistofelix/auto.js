@@ -20,7 +20,7 @@ jobs:
           git fetch origin --depth=1 "$GITHUB_SHA"
           git checkout "$GITHUB_SHA"
       - run: |
-          cp auto.js auto_win.js auto_darwin.js auto_linux.js vips.js AAF_SPEC.md README.md npm/
+          cp auto.js auto_win.js auto_darwin.js auto_linux.js vips.js runtime.js AAF_SPEC.md README.md npm/
 
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             version="$(node -p "require('./npm/package.json').version")"

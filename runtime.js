@@ -10,7 +10,7 @@ async function bunRuntime() {
   const wideInteger = (type) => ["usize", "isize", "u64", "i64"].includes(type);
   const nativeType = (type) => {
     if (type === "buffer") return "buffer";
-    if (type === "pointer") return windows ? "u64" : "ptr";
+    if (type === "pointer") return "u64";
     if (type === "usize") return "u64";
     if (type === "isize") return "i64";
     return type;
@@ -21,14 +21,14 @@ async function bunRuntime() {
   });
   const fromNative = (type, value) => {
     if (type === "pointer") {
-      return value ? (windows ? BigInt(value) : Number(value)) : null;
+      return value ? BigInt(value) : null;
     }
     return wideInteger(type) ? BigInt(value) : value;
   };
   const toNative = (type, value) => {
     if (type === "buffer") return value ?? new Uint8Array(0);
-    // Win32 HANDLEs include pseudo-handles such as (HANDLE)-1, not just addresses.
-    if (type === "pointer" && windows) {
+    // Preserve Win32 pseudo-handles and Objective-C tagged object pointers.
+    if (type === "pointer") {
       return BigInt.asUintN(64, BigInt(value ?? 0));
     }
     return value;
@@ -115,7 +115,7 @@ async function bunRuntime() {
     }
 
     getPointer(offset = 0) {
-      return fromNative("pointer", ffi.read.ptr(this.pointer, offset));
+      return fromNative("pointer", ffi.read.u64(this.pointer, offset));
     }
 
     getUint16(offset = 0) {
@@ -243,7 +243,7 @@ function darwinLoader(ffi) {
       for (const buffer of [...storage, types, ...values]) ffi.ptr(buffer);
       if (definition.result.struct) return output;
       if (definition.result === "pointer") {
-        return ffi.read.ptr(ffi.ptr(output)) || null;
+        return ffi.read.u64(ffi.ptr(output)) || null;
       }
     };
   }
@@ -266,7 +266,7 @@ function darwinLoader(ffi) {
           throw new Error(`Could not resolve ${name} in ${path}`);
         }
         if (definition.type) {
-          symbols[name] = ffi.read.ptr(pointer) || null;
+          symbols[name] = ffi.read.u64(pointer) || null;
         } else if (
           definition.result.struct ||
           definition.parameters.some((type) => type.struct)

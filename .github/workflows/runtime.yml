@@ -28,8 +28,8 @@ jobs:
           cp examples/runtime.js "$stage/examples/"
           "$HOME/.bun/bin/bun" install --cwd "$stage" --ignore-scripts
           if [ "$RUNNER_OS" = "macOS" ]; then
-            lldb --batch -o run -o bt -- "$HOME/.deno/bin/deno" run -A examples/runtime.js
-            lldb --batch -o run -o bt -- "$HOME/.bun/bin/bun" "$stage/examples/runtime.js"
+            lldb --batch -o run -k bt -- "$HOME/.deno/bin/deno" run -A examples/runtime.js
+            lldb --batch -o run -k bt -- "$HOME/.bun/bin/bun" "$stage/examples/runtime.js"
           else
             "$HOME/.deno/bin/deno" run -A examples/runtime.js
             "$HOME/.bun/bin/bun" "$stage/examples/runtime.js"

@@ -159,7 +159,6 @@ async function bunRuntime() {
 // Bun cannot pass C structs by value. macOS ships libffi for the Quartz ABI,
 // and libSystem resolves exported constants and Objective-C symbol aliases.
 function darwinLoader(ffi) {
-  console.error("Opening macOS loader");
   const loader = ffi.dlopen("/usr/lib/libSystem.B.dylib", {
     dlopen: { args: ["buffer", "i32"], returns: "ptr" },
     dlsym: { args: ["ptr", "buffer"], returns: "u64" },
@@ -171,7 +170,6 @@ function darwinLoader(ffi) {
   let typeHandle;
 
   function structFunction(pointer, definition) {
-    console.error("Preparing struct", definition);
     if (!libffi) {
       const path = "/usr/lib/libffi.dylib";
       typeHandle = loader.dlopen(cString(path), 2);
@@ -222,7 +220,6 @@ function darwinLoader(ffi) {
       throw new Error("Could not prepare Quartz struct ABI");
     }
     return (...args) => {
-      console.error("Calling struct", definition);
       const values = definition.parameters.map((type, i) => {
         if (type.struct) return args[i];
         if (type === "u32") return new Uint32Array([args[i]]);
@@ -237,14 +234,6 @@ function darwinLoader(ffi) {
       const output = new Uint8Array(
         Math.max(8, (definition.result.struct?.length ?? 0) * 8),
       );
-      console.error(
-        "CIF",
-        Array.from(cif),
-        "function",
-        pointer,
-        "args",
-        Array.from(pointers),
-      );
       libffi.ffi_call(cif, pointer, output, pointers);
       // Keep all buffers referenced by native pointers alive until ffi_call returns.
       for (const buffer of [...storage, types, ...values]) ffi.ptr(buffer);
@@ -256,15 +245,12 @@ function darwinLoader(ffi) {
   }
 
   return (path, definitions, signature, wrap) => {
-    console.error("Opening", path);
     const handle = loader.dlopen(cString(path), 2);
     if (!handle) throw new Error(`Could not open ${path}`);
     const symbols = {};
     try {
       for (const [name, definition] of Object.entries(definitions)) {
-        console.error("Resolving", name);
         const pointer = lookup(handle, definition.name ?? name);
-        console.error("Resolved", name, pointer);
         if (!pointer) {
           if (definition.optional) {
             symbols[name] = null;

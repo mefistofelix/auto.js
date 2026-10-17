@@ -162,7 +162,7 @@ function darwinLoader(ffi) {
   console.error("Opening macOS loader");
   const loader = ffi.dlopen("/usr/lib/libSystem.B.dylib", {
     dlopen: { args: ["buffer", "i32"], returns: "ptr" },
-    dlsym: { args: ["ptr", "buffer"], returns: "ptr" },
+    dlsym: { args: ["ptr", "buffer"], returns: "u64" },
     dlclose: { args: ["ptr"], returns: "i32" },
   }).symbols;
   const cString = (value) => new TextEncoder().encode(`${value}\0`);
@@ -181,7 +181,7 @@ function darwinLoader(ffi) {
           returns: "u32",
         },
         ffi_call: {
-          args: ["buffer", "ptr", "buffer", "buffer"],
+          args: ["buffer", "u64", "buffer", "buffer"],
           returns: "void",
         },
       }).symbols;

@@ -237,6 +237,7 @@ function darwinLoader(ffi) {
       const output = new Uint8Array(
         Math.max(8, (definition.result.struct?.length ?? 0) * 8),
       );
+      console.error("CIF", Array.from(cif), "function", pointer, "args", Array.from(pointers));
       libffi.ffi_call(cif, pointer, output, pointers);
       // Keep all buffers referenced by native pointers alive until ffi_call returns.
       for (const buffer of [...storage, types, ...values]) ffi.ptr(buffer);

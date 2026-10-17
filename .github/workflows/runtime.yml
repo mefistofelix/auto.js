@@ -27,5 +27,9 @@ jobs:
           cp npm/package.json "$stage/"
           cp examples/runtime.js "$stage/examples/"
           "$HOME/.bun/bin/bun" install --cwd "$stage" --ignore-scripts
-          "$HOME/.bun/bin/bun" "$stage/examples/runtime.js"
           "$HOME/.deno/bin/deno" run -A examples/runtime.js
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            lldb --batch -o run -o bt -- "$HOME/.bun/bin/bun" "$stage/examples/runtime.js"
+          else
+            "$HOME/.bun/bin/bun" "$stage/examples/runtime.js"
+          fi

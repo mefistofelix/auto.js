@@ -93,8 +93,8 @@ problem in normal `deno compile` executables.
 
 Cross-compilation of this CLI is verified for macOS x64/arm64 and Linux glibc
 x64/arm64. The full runtime suite and compiled executable are currently
-runtime-tested on Windows x64; macOS/Linux backends remain compile-verified
-until they are exercised on those operating systems.
+runtime-tested on Windows x64. macOS arm64 and headless Linux x64 also have
+runtime smoke checks; they do not yet have the full desktop regression suite.
 
 ## Direct API
 
@@ -280,8 +280,11 @@ Notepad application.
 
 The same suite runs with `bun examples/suite.js` after installing the package
 dependencies in a separate staging checkout. Windows x64 is runtime-tested with
-Deno 2.9.7 and Bun 1.4.3. macOS/Linux Bun paths are ABI-reviewed and statically
-checked, without equivalent runtime certification.
+Deno 2.9.7 and Bun 1.4.3. `examples/runtime.js` checks backend loading,
+displays/windows, scenario state, PNG/WebP round trips and scaling, and the
+macOS struct ABI. The manual `runtime` workflow runs it with both runtimes on
+macOS arm64 and headless Linux x64. These smoke checks do not certify the full
+interactive desktop surface on those platforms.
 
 ## Project structure
 

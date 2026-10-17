@@ -35,6 +35,9 @@ Keep the runtime split flat and explicit:
   to Deno on Deno, uses `bun:ffi` on Bun, and uses macOS's system libffi only for
   Quartz by-value structs that Bun FFI cannot represent. Preserve 64-bit Win32
   handles, including pseudo-handles. Never install a global Deno shim.
+  Keep all Bun pointers as exact 64-bit values: Objective-C objects can be tagged.
+  Deno pointer statics expose the symbol address; dereference exported macOS
+  pointer constants explicitly in the backend.
 - `auto.js` — common public entry point, backend selection, AAF
   scenario/state/resource logic, shared image-policy boundary, and minimal
   `import.meta.main` YAML CLI. The CLI accepts exactly one file and delegates to

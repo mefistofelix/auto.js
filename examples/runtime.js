@@ -3,7 +3,9 @@ import { runtime } from "../runtime.js";
 import { display_find, run, vips, window_find } from "../auto.js";
 import { strict as assert } from "node:assert";
 
+console.log("Checking displays");
 assert(Array.isArray(display_find()));
+console.log("Checking windows");
 assert(Array.isArray(window_find({ limit: 1 })));
 
 const scenario = await run([
@@ -13,6 +15,7 @@ const scenario = await run([
 ]);
 assert.deepEqual(scenario.state, { value: 42, copied: 42 });
 
+console.log("Checking codecs");
 const pixels = new Uint8Array([
   0,
   0,

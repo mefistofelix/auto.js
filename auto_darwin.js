@@ -289,6 +289,10 @@ function asPointer(value) {
   return value ? runtime.UnsafePointer.create(BigInt(value)) : null;
 }
 
+function nativeConstant(library, name) {
+  return new runtime.UnsafePointerView(library.symbols[name]).getPointer();
+}
+
 function cfRelease(value) {
   if (value) coreFoundation.symbols.CFRelease(value);
 }
@@ -461,7 +465,7 @@ function dictionaryValue(dictionary, key) {
 function windowRect(dictionary) {
   const bounds = dictionaryValue(
     dictionary,
-    coreGraphics.symbols.kCGWindowBounds,
+    nativeConstant(coreGraphics, "kCGWindowBounds"),
   );
   if (!bounds) return null;
   const out = new Uint8Array(32);
@@ -502,12 +506,12 @@ function cgWindowRecords() {
       for (const dictionary of cfArrayValues(onscreen)) {
         const layer = cfNumber(dictionaryValue(
           dictionary,
-          coreGraphics.symbols.kCGWindowLayer,
+          nativeConstant(coreGraphics, "kCGWindowLayer"),
         ));
         if (layer !== 0) continue;
         const id = cfNumber(dictionaryValue(
           dictionary,
-          coreGraphics.symbols.kCGWindowNumber,
+          nativeConstant(coreGraphics, "kCGWindowNumber"),
         ));
         if (id != null && !front.has(id)) front.set(id, front.size);
       }
@@ -522,16 +526,16 @@ function cgWindowRecords() {
     for (const dictionary of cfArrayValues(all)) {
       const layer = cfNumber(dictionaryValue(
         dictionary,
-        coreGraphics.symbols.kCGWindowLayer,
+        nativeConstant(coreGraphics, "kCGWindowLayer"),
       ));
       if (layer !== 0) continue;
       const id = cfNumber(dictionaryValue(
         dictionary,
-        coreGraphics.symbols.kCGWindowNumber,
+        nativeConstant(coreGraphics, "kCGWindowNumber"),
       ));
       const pid = cfNumber(dictionaryValue(
         dictionary,
-        coreGraphics.symbols.kCGWindowOwnerPID,
+        nativeConstant(coreGraphics, "kCGWindowOwnerPID"),
       ));
       const rect = windowRect(dictionary);
       if (
@@ -542,15 +546,15 @@ function cgWindowRecords() {
       }
       const titleValue = dictionaryValue(
         dictionary,
-        coreGraphics.symbols.kCGWindowName,
+        nativeConstant(coreGraphics, "kCGWindowName"),
       );
       const ownerValue = dictionaryValue(
         dictionary,
-        coreGraphics.symbols.kCGWindowOwnerName,
+        nativeConstant(coreGraphics, "kCGWindowOwnerName"),
       );
       const onscreenValue = dictionaryValue(
         dictionary,
-        coreGraphics.symbols.kCGWindowIsOnscreen,
+        nativeConstant(coreGraphics, "kCGWindowIsOnscreen"),
       );
       const zorder = front.get(id) ?? null;
       records.push({
@@ -743,8 +747,8 @@ function axSetBool(element, name, value) {
     element,
     name,
     value
-      ? coreFoundation.symbols.kCFBooleanTrue
-      : coreFoundation.symbols.kCFBooleanFalse,
+      ? nativeConstant(coreFoundation, "kCFBooleanTrue")
+      : nativeConstant(coreFoundation, "kCFBooleanFalse"),
   );
 }
 
@@ -1993,7 +1997,7 @@ function objcRelease(object) {
 }
 
 function pasteboard() {
-  const type = appKit.symbols.NSPasteboardTypeString;
+  const type = nativeConstant(appKit, "NSPasteboardTypeString");
   const boardClass = objcClass("NSPasteboard");
   const board = boardClass
     ? objc.symbols.msg0(boardClass, objcSelector("generalPasteboard"))

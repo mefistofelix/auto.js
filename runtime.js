@@ -237,7 +237,14 @@ function darwinLoader(ffi) {
       const output = new Uint8Array(
         Math.max(8, (definition.result.struct?.length ?? 0) * 8),
       );
-      console.error("CIF", Array.from(cif), "function", pointer, "args", Array.from(pointers));
+      console.error(
+        "CIF",
+        Array.from(cif),
+        "function",
+        pointer,
+        "args",
+        Array.from(pointers),
+      );
       libffi.ffi_call(cif, pointer, output, pointers);
       // Keep all buffers referenced by native pointers alive until ffi_call returns.
       for (const buffer of [...storage, types, ...values]) ffi.ptr(buffer);
@@ -266,7 +273,8 @@ function darwinLoader(ffi) {
           throw new Error(`Could not resolve ${name} in ${path}`);
         }
         if (definition.type) {
-          symbols[name] = ffi.read.u64(pointer) || null;
+          // Deno exposes a pointer static's address, not the pointer stored there.
+          symbols[name] = pointer;
         } else if (
           definition.result.struct ||
           definition.parameters.some((type) => type.struct)
